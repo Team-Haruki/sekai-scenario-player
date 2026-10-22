@@ -60,7 +60,7 @@ Options, methods, events and custom asset resolvers: [docs/api.md](docs/api.md).
 - asset source settings;
 - dark mode and a mobile layout.
 
-`npm run build:web` outputs a static site to `dist/site/`. The included GitHub Pages workflow deploys it. The deployed site holds only the player and the sample; visitors connect their own asset server, and links can carry it with `?assets=<url>&scenario=<id>`.
+`npm run build:web` outputs a static site to `dist/site/`. The included GitHub Pages workflow deploys it. The deployed site holds only the player and the sample; visitors connect their own asset server, and links can carry it with `?assets=<url>&scenario=<id>`. `?src=<url>` plays a scenario JSON from a URL, and `?view=player` shows the player alone, filling the window, with no story list or transcript (for links and embeds).
 
 ## Status
 

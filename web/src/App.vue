@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useDark, useMediaQuery, useStorage, useToggle } from "@vueuse/core";
 import {
+  ExternalLink,
   EyeOff,
   FastForward,
   Maximize,
@@ -16,7 +17,14 @@ import {
   Sun,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
-import { type ModelManifest, type PjskPlayer, type ScenarioSceneData, createAssetResolver, createPlayer } from "pjsk-scenario-player";
+import {
+  DEFAULT_MENU,
+  type ModelManifest,
+  type PjskPlayer,
+  type ScenarioSceneData,
+  createAssetResolver,
+  createPlayer,
+} from "pjsk-scenario-player";
 import fontBold from "../../fonts/SourceHanSansJP-Bold.otf?url";
 import fontMedium from "../../fonts/SourceHanSansJP-Medium.otf?url";
 import StoryBrowser from "@/components/StoryBrowser.vue";
@@ -33,6 +41,9 @@ import { cn } from "@/lib/utils";
 
 const REPO = "https://github.com/Team-Haruki/sekai-scenario-player";
 const SAMPLE = "./samples/sample_demo.json";
+// ?view=player: the stage alone, filling the window (no story list, no
+// transcript, no catalog fetch), for links and embeds
+const playerOnly = new URLSearchParams(location.search).get("view") === "player";
 
 const isDark = useDark({ storageKey: "pjsk:theme" });
 const toggleDark = useToggle(isDark);
@@ -41,8 +52,12 @@ const showBrowser = useStorage("pjsk:show-browser", true);
 const showLog = useStorage("pjsk:show-log", true);
 const settingsOpen = ref(false);
 
-// what is loaded: a ScenarioId from the asset source, a dropped file, or the sample
-type Source = { kind: "id"; sid: string } | { kind: "file"; name: string; data: ScenarioSceneData } | { kind: "sample" };
+// what is loaded: a ScenarioId from the asset source, a scenario JSON URL (?src=), a dropped file, or the sample
+type Source =
+  | { kind: "id"; sid: string }
+  | { kind: "url"; url: string }
+  | { kind: "file"; name: string; data: ScenarioSceneData }
+  | { kind: "sample" };
 const source = shallowRef<Source>();
 const scenario = shallowRef<ScenarioSceneData>();
 const progress = ref(-1);
@@ -86,6 +101,8 @@ function mount() {
     autoplay: settings.value.autoplay ? "auto" : false,
     auto: auto.value,
     voice: voice.value,
+    // the Log button opens the transcript, which the player-only view doesn't have
+    menu: playerOnly ? DEFAULT_MENU.filter((i) => i !== "log") : DEFAULT_MENU,
   });
   p.on("load", (e) => {
     scenario.value = e.scenario;
@@ -118,19 +135,39 @@ async function play(s: Source, push = true) {
     const q = new URLSearchParams(location.search);
     if (s.kind === "id") q.set("scenario", s.sid);
     else q.delete("scenario");
+    if (s.kind === "url") q.set("src", s.url);
+    else q.delete("src");
     history.pushState(null, "", q.size ? `?${q}` : location.pathname);
   }
   scenario.value = undefined;
   state.value = "loading";
   if (s.kind === "id") await player.load(s.sid);
+  else if (s.kind === "url") await player.load(s.url);
   else if (s.kind === "file") await player.load(s.data);
   else await player.load(SAMPLE);
 }
 const restart = () => source.value && play(source.value, false);
 const initialSource = (): Source => {
-  const sid = new URLSearchParams(location.search).get("scenario");
+  const q = new URLSearchParams(location.search);
+  const src = q.get("src");
+  if (src) return { kind: "url", url: src };
+  const sid = q.get("scenario");
   return sid && base.value ? { kind: "id", sid } : { kind: "sample" };
 };
+const sameSource = (a?: Source, b?: Source) =>
+  a?.kind === b?.kind && (a?.kind !== "id" || a.sid === (b as typeof a).sid) && (a?.kind !== "url" || a.url === (b as typeof a).url);
+
+// the player-only view of what is playing (a dropped file can't be linked: the sample instead)
+const playerOnlyLink = computed(() => {
+  const q = new URLSearchParams(location.search);
+  q.set("view", "player");
+  q.delete("scenario");
+  q.delete("src");
+  const s = source.value;
+  if (s?.kind === "id") q.set("scenario", s.sid);
+  if (s?.kind === "url") q.set("src", s.url);
+  return `?${q}`;
+});
 
 async function refreshSource() {
   catalog.value = null;
@@ -151,7 +188,7 @@ const icon = (id?: number) => (id != null && icons.value[id] ? `${base.value}ui/
 
 onMounted(() => {
   mount();
-  void refreshSource();
+  if (!playerOnly) void refreshSource();
   void play(initialSource(), false);
   addEventListener("popstate", onPop);
 });
@@ -161,7 +198,7 @@ onBeforeUnmount(() => {
 });
 function onPop() {
   const s = initialSource();
-  if (s.kind !== source.value?.kind || (s.kind === "id" && source.value.kind === "id" && s.sid !== source.value.sid)) void play(s, false);
+  if (!sameSource(s, source.value)) void play(s, false);
 }
 
 // a new asset source or player language: rebuild the player, replay what was on
@@ -169,7 +206,7 @@ watch(
   () => [settings.value.assets, settings.value.locale, settings.value.autoplay],
   ([a], [prevA]) => {
     mount();
-    if (a !== prevA) void refreshSource();
+    if (a !== prevA && !playerOnly) void refreshSource();
     const s = source.value?.kind === "id" && !a ? { kind: "sample" as const } : source.value;
     if (s) void play(s, false);
   },
@@ -181,6 +218,7 @@ const title = computed(() => {
   if (!s) return "";
   if (s.kind === "sample") return "示例剧情";
   if (s.kind === "file") return s.name;
+  if (s.kind === "url") return decodeURIComponent(s.url.split(/[?#]/)[0].split("/").pop() || s.url).replace(/\.json$/i, "");
   if (catalog.value)
     for (const t of TABS)
       for (const [, story] of storiesOf(catalog.value, t.key)) {
@@ -225,7 +263,24 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
 </script>
 
 <template>
-  <TooltipProvider :delay-duration="300">
+  <!-- ?view=player: the stage alone, letterboxed in the window -->
+  <div
+    v-if="playerOnly"
+    class="h-dvh w-full bg-black"
+    @dragover="onDragOver"
+    @dragleave.self="dragging = false"
+    @drop.prevent="onDrop"
+  >
+    <div ref="host" class="size-full [&_.pjsk-player]:h-full" />
+    <div
+      v-if="dragging"
+      class="pointer-events-none fixed inset-3 z-50 grid place-items-center rounded-2xl border-2 border-dashed border-pink bg-background/85 backdrop-blur-sm"
+    >
+      <p class="text-lg font-extrabold">松开即可播放这个剧情 JSON</p>
+    </div>
+    <Toaster rich-colors position="bottom-right" :mobile-offset="16" />
+  </div>
+  <TooltipProvider v-else :delay-duration="300">
     <div
       class="flex h-dvh flex-col"
       @dragover="onDragOver"
@@ -312,6 +367,14 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
             <Button variant="ghost" size="sm" @click="hideUi"><EyeOff />隐藏界面</Button>
             <Button variant="ghost" size="sm" :disabled="!source" @click="restart"><RotateCcw />重播</Button>
             <Button variant="ghost" size="sm" @click="toggleFullscreen"><Maximize />全屏</Button>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button variant="ghost" size="icon-sm" as-child>
+                  <a :href="playerOnlyLink" target="_blank" rel="noopener" aria-label="仅播放器"><ExternalLink /></a>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>在新标签页只打开播放器</TooltipContent>
+            </Tooltip>
             <span class="ml-auto text-xs text-muted-foreground tabular-nums short-landscape:hidden">
               <template v-if="state === 'ended'">播放完毕</template>
               <template v-else-if="total">片段 {{ lineCount }}</template>
