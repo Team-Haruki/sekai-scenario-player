@@ -1,0 +1,91 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Palette lifted from the game's own UI: ink #444466 (text on white panels),
+   slate #3a3a58 (story select base), lavender white #ebebf2, selection pink
+   #ff77aa, note teal #33ccbb. Dark mode sits on the talk window's navy. */
+:root {
+  --radius: 0.75rem;
+  --background: #f3f3f8;
+  --foreground: #444466;
+  --card: #ffffff;
+  --card-foreground: #444466;
+  --popover: #ffffff;
+  --popover-foreground: #444466;
+  --primary: #444466;
+  --primary-foreground: #ffffff;
+  --secondary: #ebebf2;
+  --secondary-foreground: #444466;
+  --muted: #ebebf2;
+  --muted-foreground: #7c7c9a;
+  --accent: #ebebf2;
+  --accent-foreground: #444466;
+  --destructive: #e5484d;
+  --border: #dcdce8;
+  --input: #dcdce8;
+  --ring: #ff77aa;
+  --pink: #ff77aa;
+  --teal: #33ccbb;
+  --stage: #12121f;
+}
+.dark {
+  --background: #1c1c30;
+  --foreground: #ebebf2;
+  --card: #25253d;
+  --card-foreground: #ebebf2;
+  --popover: #25253d;
+  --popover-foreground: #ebebf2;
+  --primary: #ebebf2;
+  --primary-foreground: #2b2b45;
+  --secondary: #303050;
+  --secondary-foreground: #ebebf2;
+  --muted: #2c2c48;
+  --muted-foreground: #a7a7bc;
+  --accent: #33335a;
+  --accent-foreground: #ebebf2;
+  --destructive: #ff6369;
+  --border: #36365a;
+  --input: #3a3a5e;
+  --ring: #ff77aa;
+  --stage: #09091a;
+}
+
+@theme inline {
+  --font-sans: "M PLUS Rounded 1c", "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC", system-ui, sans-serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-pink: var(--pink);
+  --color-teal: var(--teal);
+  --color-stage: var(--stage);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html, body { @apply h-full; }
+  body { @apply bg-background text-foreground font-sans antialiased; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+}

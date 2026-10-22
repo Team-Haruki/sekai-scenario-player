@@ -1,0 +1,32 @@
+# Builds the preview site (dist/site) on every run and deploys it to GitHub Pages from main.
+# The site ships the player and the sample scenario only; visitors connect their own assets.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pages:
+    name: Pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: seiunx-dev/ci-templates/.github/workflows/pages.yml@v1
+    with:
+      # the template sets up bun; the npm build runs on the runner image's Node
+      bun-version: 1.3.14
+      install-command: npm ci --ignore-scripts
+      build-command: npm run build:web
+      output-dir: dist/site

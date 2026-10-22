@@ -1,0 +1,18 @@
+# deps / build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
+
+# Your local game assets (docs/assets.md). Never commit these: game data,
+# models, audio and the Rodin fonts are copyrighted and not redistributable.
+/assets/
+
+# python
+__pycache__/
