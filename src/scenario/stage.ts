@@ -20,6 +20,7 @@ import type { EpisodeAssets, ModelManifest } from "./resolver";
 import { modeScale, sideToFraction } from "./types";
 import { AMBIENT, EASE, HologramFilter, REF, ScenarioBlurFilter, makeBackground, makeShake } from "./camera";
 import type { Clock } from "./clock";
+import { withTimeout } from "./net";
 
 // ScenarioStudioCamera.AttachEffect → SetColorEffect(monochrome, toneRatio,
 // influence) on the MonotoneColord camera material (constants from 6.8.1):
@@ -123,32 +124,90 @@ export class Stage {
     this.relayout(); // reposition + rescale on-stage characters for the new mode
   }
 
-  // Preload every appearing costume's model up front (matches the game loading
-  // NeedBundleNames before play), so an Apper is just a fade — not a load stall.
-  // All costumes load in parallel; a model that arrives after destroy() is freed.
-  async preloadAll(costumes: { Character2dId: number; CostumeType: string }[]) {
-    const uniq = new Map(costumes.filter((c) => c.CostumeType).map((c) => [c.CostumeType, c]));
-    await Promise.all(
-      [...uniq.values()].map(async (c) => {
-        try {
-          const cm = await CharacterModel.load(c.CostumeType, c.Character2dId, this.manifest, this.midx, this.assets);
-          await cm.preloadMotions();
-          if (this.dead) return cm.destroy();
-          (cm.display as any).alpha = 0;
-          this.modelCache.set(c.CostumeType, cm);
-        } catch (e) {
-          console.warn("preload failed", c.CostumeType, (e as Error).message);
-        }
-      }),
-    );
+  // Loading the models. The game loads every appearing costume (NeedBundleNames)
+  // before it plays, so an Apper is just a fade. Over the network that can take
+  // long, so only the costumes needed first are waited for (`first`); the rest
+  // load while the episode plays, a few at a time. Nothing waits forever: a
+  // costume that fails is retried once, one that takes longer than
+  // COSTUME_TIMEOUT is given up on (it is still kept if it arrives later), and
+  // an Apper waits at most APPEAR_WAIT for a costume still loading.
+  private static readonly COSTUME_TIMEOUT = 30_000;
+  private static readonly APPEAR_WAIT = 12_000;
+  private static readonly BACKGROUND_LOADS = 3;
+  private loading = new Map<string, Promise<CharacterModel | null>>();
+
+  /** The costume's model with its motions, once; null if it failed or timed out. */
+  loadCostume(costume: string, char2dId: number): Promise<CharacterModel | null> {
+    const hit = this.modelCache.get(costume);
+    if (hit) return Promise.resolve(hit);
+    let p = this.loading.get(costume);
+    if (!p) {
+      const attempt = async () => {
+        const cm = await CharacterModel.load(costume, char2dId, this.manifest, this.midx, this.assets);
+        await cm.preloadMotions();
+        return cm;
+      };
+      const full = attempt()
+        .catch(() => attempt()) // one retry: a dropped connection shouldn't lose a character
+        .then(
+          (cm) => {
+            if (this.dead) {
+              cm.destroy(); // arrived after a scenario switch
+              return null;
+            }
+            (cm.display as any).alpha = 0;
+            this.modelCache.set(costume, cm);
+            return cm;
+          },
+          (e: Error) => {
+            console.warn("model failed", costume, e.message);
+            this.loading.delete(costume); // a later Apper may try again
+            return null;
+          },
+        );
+      p = withTimeout(full, Stage.COSTUME_TIMEOUT, null);
+      this.loading.set(costume, p);
+    }
+    return p;
+  }
+
+  /**
+   * Load the scenario's costumes: resolves once the `first` ones are in (or
+   * failed / timed out); the rest keep loading in the background. `progress`
+   * reports every costume that settles.
+   */
+  async preloadAll(
+    costumes: { Character2dId: number; CostumeType: string }[],
+    first: ReadonlySet<string>,
+    progress?: (p: { loaded: number; total: number; required: number; requiredLoaded: number; failed: string[] }) => void,
+  ) {
+    const uniq = [...new Map(costumes.filter((c) => c.CostumeType).map((c) => [c.CostumeType, c])).values()];
+    const head = uniq.filter((c) => first.has(c.CostumeType));
+    const tail = uniq.filter((c) => !first.has(c.CostumeType));
+    const failed: string[] = [];
+    let loaded = 0;
+    let requiredLoaded = 0;
+    const report = () =>
+      progress?.({ loaded, total: uniq.length, required: head.length, requiredLoaded, failed: [...failed] });
+    const track = async (c: { Character2dId: number; CostumeType: string }, required: boolean) => {
+      const cm = await this.loadCostume(c.CostumeType, c.Character2dId);
+      loaded++;
+      if (required) requiredLoaded++;
+      if (!cm) failed.push(c.CostumeType);
+      if (!this.dead) report();
+    };
+    report();
+    await Promise.all(head.map((c) => track(c, true)));
+    const queue = [...tail];
+    const worker = async () => {
+      while (queue.length && !this.dead) await track(queue.shift()!, false);
+    };
+    void Promise.all(Array.from({ length: Stage.BACKGROUND_LOADS }, worker));
   }
 
   private async getModel(costume: string, char2dId: number): Promise<CharacterModel> {
-    const cached = this.modelCache.get(costume);
-    if (cached) return cached;
-    const cm = await CharacterModel.load(costume, char2dId, this.manifest, this.midx, this.assets);
-    await cm.preloadMotions();
-    this.modelCache.set(costume, cm);
+    const cm = await withTimeout(this.loadCostume(costume, char2dId), Stage.APPEAR_WAIT, null);
+    if (!cm) throw new Error(`model unavailable: ${costume}`);
     return cm;
   }
 

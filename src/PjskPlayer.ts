@@ -17,6 +17,7 @@ import { FxManager } from "./scenario/particles";
 import { ScenarioPlayer } from "./scenario/player";
 import { AssetResolver, ModelManifest, bindAssets, createAssetResolver } from "./scenario/resolver";
 import { UiSprites } from "./scenario/sprites";
+import { fetchJson } from "./scenario/net";
 import { Stage } from "./scenario/stage";
 import type { ScenarioSceneData } from "./scenario/types";
 
@@ -35,7 +36,7 @@ export interface PlayerOptions {
   auto?: boolean;
   /** Language of the start overlay and story menu. Default "zh". */
   locale?: Locale;
-  labels?: { start?: string; loading?: string; menu?: Partial<MenuLabels> };
+  labels?: { start?: string; loading?: string; models?: string; menu?: Partial<MenuLabels> };
   /**
    * The ⋯ story menu: `false` hides it, a list picks its buttons (GAME_MENU is
    * the game's own panel). Default DEFAULT_MENU: fullscreen, auto, mute, fast,
@@ -63,7 +64,13 @@ export interface PlayerOptions {
 export interface PlayerEvents {
   /** A scenario was fetched and its stage built (models still loading). */
   load: { scenario: ScenarioSceneData };
-  /** Models are loaded; playback starts now. */
+  /**
+   * A costume finished loading (or failed / timed out). Playback starts once
+   * the `required` ones (on stage for the first lines) are in; the others keep
+   * loading while it plays. `failed` lists the costumes that won't show.
+   */
+  loading: { loaded: number; total: number; required: number; requiredLoaded: number; failed: string[] };
+  /** The first costumes are loaded; playback starts now. */
   play: { scenario: ScenarioSceneData };
   /** Snippet `index` of `total` started (also fired after a jump). */
   progress: { index: number; total: number };
@@ -137,6 +144,8 @@ export class PjskPlayer {
   private stageEl: HTMLElement;
   private overlay: HTMLElement;
   private loadingEl: HTMLElement;
+  private progressEl: HTMLElement;
+  private progressText: HTMLElement;
   private statusEl: HTMLElement;
   private startBtn: HTMLButtonElement;
   private app: PIXI.Application;
@@ -165,6 +174,7 @@ export class PjskPlayer {
     this.labels = {
       start: options.labels?.start ?? base.start,
       loading: options.labels?.loading ?? base.loading,
+      models: options.labels?.models ?? base.models,
       menu: { ...base.menu, ...options.labels?.menu },
     };
     this.modes = {
@@ -232,8 +242,12 @@ export class PjskPlayer {
     this.overlay = document.createElement("div");
     this.overlay.className = "pjsk-overlay";
     this.overlay.hidden = true;
-    this.overlay.innerHTML = `<div class="pjsk-loading"></div><div class="pjsk-status"></div><button class="pjsk-start" hidden></button>`;
+    this.overlay.innerHTML = `<div class="pjsk-loading"></div>
+      <div class="pjsk-progress" hidden><i></i></div><div class="pjsk-progress-text"></div>
+      <div class="pjsk-status"></div><button class="pjsk-start" hidden></button>`;
     this.loadingEl = this.overlay.querySelector(".pjsk-loading")!;
+    this.progressEl = this.overlay.querySelector(".pjsk-progress")!;
+    this.progressText = this.overlay.querySelector(".pjsk-progress-text")!;
     this.statusEl = this.overlay.querySelector(".pjsk-status")!;
     this.startBtn = this.overlay.querySelector(".pjsk-start")!;
     this.loadingEl.textContent = this.labels.loading;
@@ -392,10 +406,11 @@ export class PjskPlayer {
   }
 
   /** Change the start overlay and menu text. */
-  setLabels(labels: { start?: string; loading?: string; menu?: Partial<MenuLabels> }) {
+  setLabels(labels: { start?: string; loading?: string; models?: string; menu?: Partial<MenuLabels> }) {
     this.labels = {
       start: labels.start ?? this.labels.start,
       loading: labels.loading ?? this.labels.loading,
+      models: labels.models ?? this.labels.models,
       menu: { ...this.labels.menu, ...labels.menu },
     };
     this.loadingEl.textContent = this.labels.loading;
@@ -409,11 +424,20 @@ export class PjskPlayer {
     this.loadingEl.hidden = false;
     this.statusEl.textContent = "";
     this.startBtn.hidden = true;
+    this.showProgress(0, 0);
+  }
+  // models loaded of those playback waits for (nothing to count: no bar)
+  private showProgress(done: number, total: number) {
+    const on = total > 0 && !this.loadingEl.hidden;
+    this.progressEl.hidden = !on;
+    this.progressText.textContent = on ? `${this.labels.models} ${done} / ${total}` : "";
+    (this.progressEl.firstElementChild as HTMLElement).style.width = `${total ? (100 * done) / total : 0}%`;
   }
   /** Show a message over the stage instead of the scenario (an error, a prompt). */
   showMessage(text: string) {
     this.overlay.hidden = false;
     this.loadingEl.hidden = true;
+    this.showProgress(0, 0);
     this.startBtn.hidden = true;
     this.statusEl.textContent = text;
   }
@@ -497,6 +521,11 @@ export class PjskPlayer {
     player.voiceEnabled = this.modes.voice;
     player.setFast(this.modes.fast);
     player.onProgress = (index, total) => this.emit("progress", { index, total });
+    player.onLoadProgress = (p) => {
+      if (this.session?.player !== player) return;
+      this.emit("loading", p);
+      this.showProgress(p.requiredLoaded, p.required);
+    };
     player.onReady = () => {
       if (this.session?.player !== player) return;
       this.overlay.hidden = true;
@@ -604,10 +633,4 @@ export class PjskPlayer {
     // keep the spinner / start button / status readable on a small stage
     this.overlay.style.zoom = String(k < 0.6 ? Math.min(2.6, 0.6 / k) : 1);
   }
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-  return (await r.json()) as T;
 }

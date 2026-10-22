@@ -224,6 +224,12 @@
 .pjsk-loading { display: flex; flex-direction: column; align-items: center; gap: 14px;
   font: 700 15px var(--pjsk-cjk-bold); color: rgb(223,223,234); letter-spacing: .1em; }
 .pjsk-loading[hidden] { display: none; }
+/* models loaded of those playback waits for */
+.pjsk-progress { width: 200px; height: 4px; margin-top: -4px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,.18); }
+.pjsk-progress[hidden] { display: none; }
+.pjsk-progress i { display: block; width: 0; height: 100%; border-radius: 2px; background: rgb(255,119,170); transition: width .25s; }
+.pjsk-progress-text { margin-top: -8px; font: 700 12px var(--pjsk-cjk-bold); color: rgba(223,223,234,.75); font-variant-numeric: tabular-nums; }
+.pjsk-progress-text:empty { display: none; }
 .pjsk-loading::before { content: ""; width: 44px; height: 44px; border-radius: 50%;
   border: 4px solid rgba(255,255,255,.18); border-top-color: rgb(255,119,170);
   animation: pjsk-spin .8s linear infinite; }

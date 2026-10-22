@@ -79,6 +79,21 @@ interface ReplayState {
   chars: Map<number, PlacedChar>;
 }
 
+// Costumes on stage before the EARLY_TALKS-th line: playback waits for these
+// only, the others load while it plays.
+const EARLY_TALKS = 3;
+function earlyCostumes(scn: ScenarioSceneData): Set<string> {
+  const out = new Set((scn.FirstLayout || []).map((l) => l.CostumeType).filter(Boolean));
+  let talks = 0;
+  for (const s of scn.Snippets) {
+    if (s.Action === Action.Talk && ++talks >= EARLY_TALKS) break;
+    if (s.Action !== Action.CharacterLayout) continue;
+    const l = scn.LayoutData[s.ReferenceIndex];
+    if (l?.Type === LayoutType.Apper && l.CostumeType) out.add(l.CostumeType);
+  }
+  return out;
+}
+
 const SIDE_FADES: Record<number, string> = {
   [SpecialEffectType.LeftIn]: "LeftIn",
   [SpecialEffectType.LeftOut]: "LeftOut",
@@ -116,6 +131,8 @@ export class ScenarioPlayer {
   onSekaiTransition?: (anniversary: boolean) => void;
   onEffectsRestore?: (effects: string[], hologram: number[]) => void; // after a jump
   onReady?: () => void; // fired after preload, before the first snippet
+  // costumes settling during preload (`required` = the ones playback waits for)
+  onLoadProgress?: (p: { loaded: number; total: number; required: number; requiredLoaded: number; failed: string[] }) => void;
 
   constructor(
     private scn: ScenarioSceneData,
@@ -215,7 +232,9 @@ export class ScenarioPlayer {
 
   // Load every costume (run() awaits this too; call early to load before play).
   preload() {
-    return (this.preloading ??= this.stage.preloadAll(this.scn.AppearCharacters));
+    return (this.preloading ??= this.stage.preloadAll(this.scn.AppearCharacters, earlyCostumes(this.scn), (p) =>
+      this.onLoadProgress?.(p),
+    ));
   }
 
   // Scenario switch: end this player for good (its run() resolves).
