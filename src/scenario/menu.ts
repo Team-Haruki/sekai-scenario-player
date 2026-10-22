@@ -21,11 +21,13 @@ export const DEFAULT_MENU: readonly MenuItem[] = ["fullscreen", "auto", "mute", 
 
 export type MenuHandlers = Partial<Record<MenuItem, () => void>>;
 
-// icons the game has no sprite for, drawn as masks like its icon sprites
-const svgMask = (body: string) =>
-  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`)}`;
-const IC_FULLSCREEN = svgMask(`<path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/>`);
-const IC_MUTE = svgMask(`<path d="M4 9h4l5-4v14l-5-4H4z" fill="#000"/><path d="M17 9l5 6M22 9l-5 6"/>`);
+// icons the game has no sprite for, drawn as masks like its icon sprites; the
+// viewBox is cropped to the ink (stroke included) so they fill their box as the
+// game's sprites do
+const svgMask = (viewBox: string, body: string) =>
+  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" fill="none" stroke="#000" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`)}`;
+const IC_FULLSCREEN = svgMask("1.7 1.7 20.6 20.6", `<path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/>`);
+const IC_MUTE = svgMask("2.7 3.7 20.6 16.6", `<path d="M4 9h4l5-4v14l-5-4H4z" fill="#000"/><path d="M17 9l5 6M22 9l-5 6"/>`);
 
 // Wide buttons (280x96): icon centred 77.4 left of the button centre; label
 // centred in its rect (width 280 - inset, shifted by `tx`). `icon` is a game
@@ -36,8 +38,8 @@ const WIDE: Partial<Record<MenuItem, { icon: string; iw: number; ih: number; ins
   consecutive: { icon: "ic_consecutive", iw: 48, ih: 34, inset: 152, tx: 27.2, sp: -2 },
   skip: { icon: "ic_skip", iw: 48, ih: 32, inset: 152, tx: 27.2, sp: -2 },
   fast: { icon: "ic_fast", iw: 48, ih: 32, inset: 152, tx: 11.6, sp: -2 },
-  mute: { icon: IC_MUTE, iw: 38, ih: 34, inset: 152, tx: 11.3, sp: -2 },
-  fullscreen: { icon: IC_FULLSCREEN, iw: 34, ih: 34, inset: 152, tx: 11.3, sp: -2 },
+  mute: { icon: IC_MUTE, iw: 40, ih: 32, inset: 152, tx: 11.3, sp: -2 },
+  fullscreen: { icon: IC_FULLSCREEN, iw: 36, ih: 36, inset: 152, tx: 11.3, sp: -2 },
 };
 // Small buttons (136x112) at x ∓72 from the content centre.
 const SMALL: Partial<Record<MenuItem, { cx: number; icon: string; iw: number; ih: number; ix: number }>> = {

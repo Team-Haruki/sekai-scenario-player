@@ -155,7 +155,7 @@ export class Stage {
               cm.destroy(); // arrived after a scenario switch
               return null;
             }
-            (cm.display as any).alpha = 0;
+            this.setOpacity(cm, 0);
             this.modelCache.set(costume, cm);
             return cm;
           },
@@ -498,10 +498,27 @@ export class Stage {
     this.refreshFilters(cm);
   }
 
+  // Layout timings (ScenarioPlayer.SnippetActionCharacterLayout, 7.0.0):
+  // - Apper: AppearCharacter fades the model in over 0.1 s and finishes the
+  //   snippet through CharacterMoveTo(…, 0.2 s); a slide to SideTo runs on
+  //   without gating.
+  // - Hide: HideCharacter fades out over 0.1 s after a delay of
+  //   timeMultiplierInSkipMode (0.5, set in the ctor and applied here outside
+  //   skip mode too) × 0.15 s, or, sliding out to SideTo, 0.5 × move − 0.1 s.
+  private static readonly FADE_MS = 100;
+  private static readonly APPEAR_MS = 200;
+  private static readonly HIDE_DELAY_MS = 75;
+
   // Apper(2): ensure model for costume, place at side, play motion/facial, fade in.
   // Empty costume (70% of Appers in real scenarios) = re-show the character's
   // existing model. Models are kept alive across Hide so this works.
   async appear(char2dId: number, costume: string, side: number, offsetX: number, motion: string, facial: string) {
+    const gate = this.clock.sleep(Stage.APPEAR_MS);
+    await this.appearModel(char2dId, costume, side, offsetX, motion, facial);
+    await gate;
+  }
+
+  private async appearModel(char2dId: number, costume: string, side: number, offsetX: number, motion: string, facial: string) {
     const sc = this.chars.get(char2dId);
     if (!costume || (sc && sc.costume === costume)) {
       if (!sc) return; // empty costume but never appeared — nothing to show
@@ -512,7 +529,7 @@ export class Stage {
     const cm = await this.getModel(costume, char2dId);
     if (epoch !== this.clock.epoch) return; // a jump rebuilt the stage meanwhile
     const d = cm.display as any;
-    d.alpha = 0;
+    this.setOpacity(cm, 0);
     this.addModel(cm);
     this.fitModel(d, side, offsetX);
     if (sc) this.charLayer.removeChild(sc.cm.display as any); // keep old in cache
@@ -520,11 +537,11 @@ export class Stage {
     // pose first (no fade-in from the default T-pose), show once it has rendered
     await cm.playInstant(motion, facial);
     await this.clock.sleep(34);
-    await this.clock.tween(100, 0, 1, (v) => (d.alpha = v)); // 0.1s appear fade
+    await this.fadeTo(cm, 1);
   }
 
   // Apper with SideFrom != SideTo: slide in from off-screen (e.g. Mizuki enters
-  // from RightOver → RightInside). Placed at `from` visible, then tweened to `to`.
+  // from RightOver → RightInside). Placed at `from`, faded in while it slides to `to`.
   async appearSlide(
     char2dId: number,
     costume: string,
@@ -536,6 +553,7 @@ export class Stage {
     motion: string,
     facial: string,
   ) {
+    const gate = this.clock.sleep(Stage.APPEAR_MS);
     let sc = this.chars.get(char2dId);
     if (!costume) {
       if (!sc) return; // empty costume = re-show the existing model; none yet
@@ -546,7 +564,7 @@ export class Stage {
       const epoch = this.clock.epoch;
       const cm = await this.getModel(costume, char2dId);
       if (epoch !== this.clock.epoch) return;
-      (cm.display as any).alpha = 0;
+      this.setOpacity(cm, 0);
       this.addModel(cm);
       if (sc) this.charLayer.removeChild(sc.cm.display as any);
       sc = { costume, cm, side: sideTo };
@@ -559,10 +577,10 @@ export class Stage {
       await sc.cm.playInstant(motion, facial); // no T-pose frame while sliding in
       await this.clock.sleep(34);
     } else sc.cm.play(motion, facial);
-    d.alpha = 1;
-    // the game finishes the Apper on the ~0.1s fade; the slide runs async
+    // the slide runs on after the Apper finishes
     void this.clock.tween(ms, this.placeX(sideFrom, offFrom), this.placeX(sideTo, offTo), (v) => (d.position.x = v));
-    await this.clock.sleep(100);
+    await this.fadeTo(sc.cm, 1);
+    await gate;
   }
 
   private async showExisting(sc: StageChar, side: number, offsetX: number, motion: string, facial: string) {
@@ -571,21 +589,31 @@ export class Stage {
     this.fitModel(d, side, offsetX); // reposition (+ rescale for current mode)
     this.charLayer.addChild(d); // raise to top
     this.refreshFilters(sc.cm);
-    if (d.alpha < 0.01) {
+    if (sc.cm.opacity < 0.01) {
       // hidden: pose before it shows (no default-pose frame during the fade)
       const epoch = this.clock.epoch;
       await sc.cm.playInstant(motion, facial);
       if (epoch !== this.clock.epoch) return;
     } else sc.cm.play(motion, facial);
-    if (d.alpha < 1) await this.clock.tween(200, d.alpha, 1, (v) => (d.alpha = v));
+    await this.fadeTo(sc.cm, 1);
   }
 
-  // Hide(3): keep the model (a later empty-costume Apper re-shows it), just fade out.
-  async hide(char2dId: number) {
+  // Hide(3): keep the model (a later empty-costume Apper re-shows it), just fade
+  // out; from SideFrom when set, sliding out to SideTo when that differs.
+  async hide(char2dId: number, sideFrom: number, offFrom: number, sideTo: number, offTo: number, ms: number) {
     const sc = this.chars.get(char2dId);
     if (!sc) return;
     const d = sc.cm.display as any;
-    await this.clock.tween(100, d.alpha, 0, (v) => (d.alpha = v)); // 0.1s hide fade
+    if (sideFrom !== 0) this.fitModel(d, sideFrom, offFrom);
+    let delay = Stage.HIDE_DELAY_MS;
+    if (sideTo !== sideFrom) {
+      this.charLayer.addChild(d); // SetCharacterDepth: in front while it leaves
+      sc.side = sideTo;
+      void this.clock.tween(ms, d.position.x, this.placeX(sideTo, offTo), (v) => (d.position.x = v));
+      delay = Math.max(0, ms * 0.5 - Stage.FADE_MS);
+    }
+    await this.clock.sleep(delay);
+    await this.fadeTo(sc.cm, 0);
   }
 
   async move(char2dId: number, toSide: number, offsetX: number, ms: number) {
@@ -611,7 +639,7 @@ export class Stage {
 
   // Movie (19): every shown character is hidden instantly first.
   hideAll() {
-    for (const sc of this.chars.values()) (sc.cm.display as any).alpha = 0;
+    for (const sc of this.chars.values()) this.setOpacity(sc.cm, 0);
   }
 
   // Apply motion/facial to an already-present character (CharacterMotion / Talk).
@@ -639,7 +667,7 @@ export class Stage {
       x: (d.position.x - this.w / 2) / REF,
       y: -540 - (d.position.y - this.h * Stage.CENTER_Y) / REF,
       scale: Stage.VIEW_SCALE * modeScale(this.layoutMode),
-      visible: d.alpha > 0.01 && d.parent === this.charLayer,
+      visible: sc.cm.opacity > 0.01 && d.parent === this.charLayer,
     };
   }
 
@@ -686,8 +714,33 @@ export class Stage {
   }
 
   private refreshFilters(cm: CharacterModel) {
-    const fs = [this.ambientFilter, this.modelFx.get(cm)?.filter].filter(Boolean) as PIXI.Filter[];
+    const fade = cm.opacity < 1 ? this.fadeFilter(cm) : undefined;
+    const fs = [this.ambientFilter, this.modelFx.get(cm)?.filter, fade].filter(Boolean) as PIXI.Filter[];
     (cm.display as any).filters = fs.length ? fs : null;
+  }
+
+  // A model fades as one image, like the game's RawImage over the model's render
+  // texture (Live2DModelView.FadeOpacity, linear): an AlphaFilter on the
+  // composited model while it is below 1. The model's own alpha would fade every
+  // part separately, so hair, arms and clothes showed through each other.
+  private fades = new WeakMap<CharacterModel, PIXI.AlphaFilter>();
+  private fadeFilter(cm: CharacterModel) {
+    let f = this.fades.get(cm);
+    if (!f) this.fades.set(cm, (f = new PIXI.AlphaFilter(cm.opacity)));
+    return f;
+  }
+  private setOpacity(cm: CharacterModel, v: number) {
+    const was = cm.opacity < 1;
+    cm.opacity = v;
+    this.fadeFilter(cm).alpha = v;
+    const d = cm.display as any;
+    d.alpha = 1;
+    d.renderable = v > 0;
+    if (was !== v < 1) this.refreshFilters(cm);
+  }
+  private fadeTo(cm: CharacterModel, to: number) {
+    if (cm.opacity === to) return Promise.resolve();
+    return this.clock.tween(Stage.FADE_MS, cm.opacity, to, (v) => this.setOpacity(cm, v));
   }
 
   // ── jump / teardown ───────────────────────────────────────────────────────
@@ -731,13 +784,13 @@ export class Stage {
     const cm = await this.getModel(costume, char2dId);
     if (epoch !== this.clock.epoch) return;
     const d = cm.display as any;
-    d.alpha = 0;
+    this.setOpacity(cm, 0);
     this.addModel(cm);
     this.fitModel(d, side, offsetX);
     this.chars.set(char2dId, { costume, cm, side });
     await cm.playInstant(motion, facial); // posed even while hidden
     if (epoch !== this.clock.epoch || !visible) return;
-    d.alpha = 1;
+    this.setOpacity(cm, 1);
   }
 
   // Scenario switch: drop the stage and free every loaded model.

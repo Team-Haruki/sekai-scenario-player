@@ -65,6 +65,8 @@ export class CharacterModel {
   private static readonly BREATH_CYCLE = 3.0; // s
   private static readonly BREATH_INFLUENCE = 0.5; // game packs breathInfluence=0.5
   private releaseAhead?: () => void; // drops this model's fetchAhead() files
+  /** Shown opacity, applied by the stage as one image (see Stage.setOpacity). */
+  opacity = 1;
   constructor(public readonly display: Live2DModel) {}
 
   // lip-sync target (already curved/clamped by the player); null = mouth closed.

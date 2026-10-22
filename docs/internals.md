@@ -69,8 +69,9 @@ Keep this model when changing handlers. Every wait and tween must go through `cl
   - Closing the window flushes pending ChangeMotions and stops the voice.
   - Timed motions: with `MotionChangeFrom == PlayTime`, they fire at `TimingSyncValue` seconds.
 - **CharacterLayout (2)**:
-  - `Apper`: 0.1 s fade-in; an empty `CostumeType` reuses the current model; all costumes are preloaded.
-  - `Hide`: fades out but keeps the model.
+  - `Apper`: 0.1 s fade-in, and the snippet finishes after 0.2 s (`AppearCharacter` → `CharacterMoveTo(…, 0.2)`); a slide to `SideTo` runs on without gating. An empty `CostumeType` reuses the current model; all costumes are preloaded.
+  - `Hide`: 0.1 s fade-out after 0.075 s (`timeMultiplierInSkipMode`, 0.5, × 0.15 s), from `SideFrom` when set; sliding out to `SideTo`, the fade starts 0.5 × move − 0.1 s in. The model is kept.
+  - A model fades as one image: the game draws it to a render texture and fades the `RawImage` (`Live2DModelView.FadeOpacity`, linear), so the stage puts the opacity on an `AlphaFilter`, not on the model's own alpha (that fades each part separately and overlaps show through).
   - `Move`: 0.5 s (normal) / 0.33 s (fast) / 0.75 s (slow).
   - `ShakeX/Y`; slide-in when `SideFrom ≠ SideTo`.
 - **CharacterMotion (4)**: switches motion / facial from `LayoutData`, at once and without blocking.
