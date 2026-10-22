@@ -13,7 +13,7 @@ npm i github:Team-Haruki/sekai-scenario-player pixi.js@^7.4
 Each release also attaches a built tarball, for package managers that don't run a git dependency's build (Bun, for one):
 
 ```bash
-npm i https://github.com/Team-Haruki/sekai-scenario-player/releases/download/v0.2.4/pjsk-scenario-player-0.2.4.tgz
+npm i https://github.com/Team-Haruki/sekai-scenario-player/releases/download/v0.3.0/pjsk-scenario-player-0.3.0.tgz
 ```
 
 The installed package is named `pjsk-scenario-player`, which is what the imports below use. `pixi.js` v7 is a peer dependency, shared with your app. You can also clone the repository, run `npm run build:lib` and copy `dist/lib/` into your project.
@@ -158,7 +158,7 @@ Members and what they return:
 | `model(entry, ctx)` | the costume's `.model3` URL; textures and physics resolve relative to it |
 | `physics?(entry, ctx)` | optional: a physics file to use instead of the model3's reference, or `null` to drop physics |
 | `motion(entry, kind, name, ctx)` | a motion3 URL, or `null` when the costume has no such clip (it is skipped) |
-| `bgm(id, ctx)`, `se(id, ctx)`, `voice(scenarioId, voiceId, ctx)`, `background(id, ctx)` | `AssetUrls`: one URL, or candidate URLs tried in order until one loads; `null` / `[]` skips the asset |
+| `bgm(id, ctx)`, `se(id, ctx)`, `voice(scenarioId, voiceId, ctx, info)`, `background(id, ctx)` | `AssetUrls`: one URL, or candidate URLs tried in order until one loads; `null` / `[]` skips the asset. `info.character2dId` is the speaker of a voice (absent for full-screen text), for trees that file voices by character |
 | `movie(name, ctx)` | a URL, or `null` to skip the movie |
 
 `ctx` is the episode being loaded, `{ scenario, data }`, where `data` is the `context` passed to `load()`. That lets a resolver depend on the episode, for example look in different folders for card stories:
