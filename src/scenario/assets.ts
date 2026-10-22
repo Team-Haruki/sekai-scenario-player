@@ -3,6 +3,7 @@
 
 import type { Live2DModel } from "@sekai-world/pixi-live2d-display-mulmotion/cubism4";
 import { getLive2D } from "./live2d";
+import { fetchJson } from "./net";
 import type { EpisodeAssets, ModelManifest } from "./resolver";
 import type { ScenarioSceneData } from "./types";
 
@@ -95,9 +96,7 @@ export class CharacterModel {
     if (!m) throw new Error(`no manifest entry for costume ${costume}`);
 
     const modelUrl = assets.model(m);
-    const res = await fetch(modelUrl);
-    if (!res.ok) throw new Error(`${costume}: model HTTP ${res.status}`);
-    const settings: any = await res.json();
+    const settings: any = await fetchJson(modelUrl);
     settings.url = modelUrl; // textures / physics resolve relative to it
     // the host may point physics elsewhere (exports that renamed the file) or drop it
     const physics = assets.physics(m);
@@ -249,7 +248,7 @@ export class CharacterModel {
     }
     let params: Array<[string, number]> = [];
     try {
-      const m = await (await fetch(url)).json();
+      const m = await fetchJson<any>(url);
       params = (m.Curves || [])
         .filter(
           (c: any) =>

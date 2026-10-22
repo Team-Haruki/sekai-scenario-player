@@ -63,7 +63,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `autoplay` | `boolean \| "auto"` | `"auto"` | Start playing once loaded. `"auto"` does so when the browser allows sound without a click and shows the start button otherwise; `false` always shows the button |
 | `auto` | `boolean` | `true` | Auto-advance lines (the menu's Auto) |
 | `locale` | `"zh" \| "ja" \| "en"` | `"zh"` | Language of the start overlay and the menu (`ja` is the game's own text) |
-| `labels` | `{ start?, loading?, menu? }` | — | Override individual strings |
+| `labels` | `{ start?, loading?, models?, menu? }` | — | Override individual strings (`models` prefixes the loading count) |
 | `menu` | `boolean \| MenuItem[]` | `DEFAULT_MENU` | The ⋯ story menu: `false` hides it, a list picks its buttons. `DEFAULT_MENU` is fullscreen, auto, mute, fast, hide, log; `GAME_MENU` is the game's own panel (bookmark, consecutive and skip only look like the game) |
 | `muted` | `boolean` | `false` | Start muted |
 | `voice` | `boolean` | `true` | Play the voices |
@@ -99,7 +99,8 @@ Read-only properties: `scenario`, `auto`, `fast`, `uiHidden`, `muted`, `voice`, 
 | Event | Payload | When |
 |---|---|---|
 | `load` | `{ scenario }` | The scenario was fetched and its stage built (models may still be loading) |
-| `play` | `{ scenario }` | Models are loaded; playback starts |
+| `loading` | `{ loaded, total, required, requiredLoaded, failed }` | A costume finished loading, failed or timed out. Playback waits only for the `required` ones; `failed` lists costumes that won't show |
+| `play` | `{ scenario }` | The first costumes are loaded; playback starts |
 | `progress` | `{ index, total }` | Snippet `index` started (also after a jump) |
 | `end` | `{ scenario }` | Playback reached the end |
 | `error` | `{ error }` | The scenario or the model manifest failed to load |
@@ -115,6 +116,18 @@ The root element, `.pjsk-player`, is `100%` wide with a 16:9 aspect ratio, so si
 ```
 
 If you give `.pjsk-player` another height, the stage is centred and letterboxed.
+
+## Loading
+
+The player doesn't wait for every model before it starts.
+
+- **What it waits for:** the costumes on stage before the third line of dialogue. The spinner shows their count and a progress bar.
+- **The rest** load while the episode plays, three at a time.
+- **Time limits and retries:** nothing waits forever.
+  - JSON fetches (scenario, manifest, model3, facials) time out after 15 s and are retried twice (network errors and 5xx).
+  - A costume that fails to load is retried once.
+  - A costume that takes longer than 30 s is given up on. It is still used if it arrives later.
+  - An appearance waits at most 12 s for a costume that is still loading. Otherwise that appearance is skipped and the timeline carries on.
 
 ## Asset resolution
 
