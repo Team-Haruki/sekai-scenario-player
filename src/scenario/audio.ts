@@ -202,7 +202,14 @@ export class AudioManager {
     const key = urls.join("\n");
     let c = this.clips.get(key);
     if (c) this.clips.delete(key); // re-insert: most recently used last
-    else c = { blob: fetchFirst(urls) };
+    else {
+      const clip: Clip = { blob: fetchFirst(urls) };
+      // a clip no candidate gave is forgotten, so the next request tries again
+      void clip.blob.then((b) => {
+        if (!b && this.clips.get(key) === clip) this.clips.delete(key);
+      });
+      c = clip;
+    }
     this.clips.set(key, c);
     if (this.clips.size > CLIP_CACHE) this.clips.delete(this.clips.keys().next().value!);
     return c;
