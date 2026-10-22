@@ -24,13 +24,16 @@ export class Clock {
     });
   }
 
-  // Tween of `set(v)` from `from` to `to` over `ms` (scaled), linear unless `ease` is given.
+  // Tween of `set(v)` from `from` to `to` over `ms` (scaled), linear unless
+  // `ease` is given. Once `alive()` turns false (a newer tween took over) it
+  // stops and resolves at once, as a killed DOTween ends WaitForCompletion.
   tween(
     ms: number,
     from: number,
     to: number,
     set: (v: number) => void,
     ease: (t: number) => number = (t) => t,
+    alive: () => boolean = () => true,
   ): Promise<void> {
     if (ms <= 0) {
       set(to);
@@ -42,6 +45,7 @@ export class Clock {
       const t0 = Date.now();
       const tick = () => {
         if (epoch !== this.epoch) return; // cancelled by a jump
+        if (!alive()) return resolve();
         const k = Math.min(1, (Date.now() - t0) / dur);
         set(from + (to - from) * ease(k));
         if (k < 1) setTimeout(tick, 16);

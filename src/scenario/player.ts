@@ -46,7 +46,7 @@ const MOVE_MS = [500, 330, 750];
 const AUTO_PAGE_DELAY = 2000; // TalkWindow.prefab autoTextNextPageDelay: no voice, or voice already ended at typing-end
 const AUTO_POST_VOICE = 500; // after the voice clip ends
 const VOICE_CAP = 30000; // give up waiting for a voice after this
-const PREFETCH_TALKS = 3; // lines ahead whose voices and SEs are fetched
+const PREFETCH_TALKS = 3; // lines ahead whose voices, SEs and backgrounds are fetched
 // 早送り: in-game capture advances a line every ~0.5-1s with the text shown at once.
 const FAST_SCALE = 3;
 const FAST_PAGE_HOLD = 500 * FAST_SCALE; // → 0.5s real time at FAST_SCALE
@@ -225,8 +225,8 @@ export class ScenarioPlayer {
       const param: InFlight = { status: 0 };
       this.executeSnippets.set(s, param); // mark in-flight AFTER the barrier
       this.onProgress?.(seq, snippets.length, Action[s.Action] ?? String(s.Action));
-      if (seq === start) this.prefetchAudio(seq); // after a jump
-      else if (s.Action === Action.Talk) this.prefetchAudio(seq + 1);
+      if (seq === start) this.prefetchAhead(seq); // after a jump
+      else if (s.Action === Action.Talk) this.prefetchAhead(seq + 1);
       void this.runAction(s, param, gen); // start the action in PARALLEL — not awaited
     }
     await this.waitAllFinished(); // end-of-scenario drain
@@ -235,29 +235,32 @@ export class ScenarioPlayer {
 
   // Load every costume (run() awaits this too; call early to load before play).
   preload() {
-    this.prefetchAudio(0);
+    this.prefetchAhead(0);
     return (this.preloading ??= this.stage.preloadAll(this.scn.AppearCharacters, earlyCostumes(this.scn), (p) =>
       this.onLoadProgress?.(p),
     ));
   }
 
-  // Fetch the voices and SEs of the next few lines while this one plays, so a
-  // voice starts with its line instead of after its download.
-  private prefetchAudio(from: number) {
-    if (this.fast) return;
+  // Fetch the voices, SEs and backgrounds of the next few lines while this one
+  // plays, so a voice starts with its line instead of after its download, and
+  // quick background cuts (each waits for its image) keep their pace.
+  private prefetchAhead(from: number) {
     const { Snippets, TalkData, SoundData, SpecialEffectData, ScenarioId } = this.scn;
+    const sound = !this.fast; // fast-forward plays no voices (its SEs load when they ring)
+    const voice = sound && this.voiceEnabled;
     for (let i = from, talks = 0; i < Snippets.length && talks < PREFETCH_TALKS; i++) {
       const s = Snippets[i];
       if (s.Action === Action.Talk) {
         talks++;
         const v = TalkData[s.ReferenceIndex]?.Voices?.[0];
-        if (v && this.voiceEnabled) this.audio.preload(this.assets.voice(ScenarioId, v.VoiceId));
+        if (v && voice) this.audio.preload(this.assets.voice(ScenarioId, v.VoiceId));
       } else if (s.Action === Action.Sound) {
         const se = SoundData[s.ReferenceIndex]?.Se;
-        if (se) this.audio.preload(this.assets.se(se));
+        if (se && sound) this.audio.preload(this.assets.se(se));
       } else if (s.Action === Action.SpecialEffect) {
         const e = SpecialEffectData[s.ReferenceIndex];
-        if (e?.EffectType === SpecialEffectType.FullScreenText && e.StringValSub && this.voiceEnabled)
+        if (e?.EffectType === SpecialEffectType.ChangeBackground) this.stage.preloadBackground(e.StringVal);
+        else if (e?.EffectType === SpecialEffectType.FullScreenText && e.StringValSub && voice)
           this.audio.preload(this.assets.voice(ScenarioId, e.StringValSub));
       }
     }
