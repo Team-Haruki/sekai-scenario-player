@@ -222,22 +222,17 @@ export class Stage {
     return PIXI.Texture.EMPTY;
   }
 
-  private loadTexture(url: string): Promise<PIXI.Texture | null> {
-    const tex = PIXI.Texture.from(url, { resourceOptions: { crossorigin: true } } as any);
-    if (tex.baseTexture.valid) return Promise.resolve(tex);
-    return new Promise((resolve) => {
-      let done = false;
-      const fin = (ok: boolean) => {
-        if (done) return;
-        done = true;
-        // a failed texture stays in PIXI's cache: drop it so a later load retries
-        if (!ok) PIXI.Texture.removeFromCache(tex);
-        resolve(ok ? tex : null);
-      };
-      tex.baseTexture.once("loaded", () => fin(true));
-      tex.baseTexture.once("error", () => fin(false));
-      setTimeout(() => fin(tex.baseTexture.valid), 5000); // don't hang the timeline on a bad bg
-    });
+  // fromURL, not from(): from() starts the load itself and nothing catches its
+  // rejection, so each missing candidate was an unhandled "Event" error
+  private async loadTexture(url: string): Promise<PIXI.Texture | null> {
+    const load = PIXI.Texture.fromURL(url, { resourceOptions: { crossorigin: true } });
+    const tex = await withTimeout(load, 5000, null); // don't hang the timeline on a bad bg
+    // a failed texture stays in PIXI's cache: drop it so a later load retries
+    if (!tex) {
+      PIXI.Texture.removeFromCache(url);
+      PIXI.BaseTexture.removeFromCache(url);
+    }
+    return tex;
   }
 
   private makeBg(tex: PIXI.Texture) {
