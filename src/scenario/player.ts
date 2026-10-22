@@ -253,7 +253,7 @@ export class ScenarioPlayer {
       if (s.Action === Action.Talk) {
         talks++;
         const v = TalkData[s.ReferenceIndex]?.Voices?.[0];
-        if (v && voice) this.audio.preload(this.assets.voice(ScenarioId, v.VoiceId));
+        if (v && voice) this.audio.preload(this.assets.voice(ScenarioId, v.VoiceId, { character2dId: v.Character2dId }));
       } else if (s.Action === Action.Sound) {
         const se = SoundData[s.ReferenceIndex]?.Se;
         if (se && sound) this.audio.preload(this.assets.se(se));
@@ -576,7 +576,7 @@ export class ScenarioPlayer {
     let voiceEnded = !v;
     const voiceP = v
       ? this.audio
-          .playVoice(this.assets.voice(this.scn.ScenarioId, v.VoiceId), v.Volume ?? 1)
+          .playVoice(this.assets.voice(this.scn.ScenarioId, v.VoiceId, { character2dId: v.Character2dId }), v.Volume ?? 1)
           .then(() => {
             voiceEnded = true;
           })

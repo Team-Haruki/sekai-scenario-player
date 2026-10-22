@@ -32,6 +32,11 @@ export interface LoadContext {
   data?: unknown;
 }
 
+/** Who speaks a voice clip (TalkData.Voices; full-screen text voices have no speaker). */
+export interface VoiceInfo {
+  character2dId?: number;
+}
+
 export interface AssetResolver {
   /** Scenario JSON, used by `player.load("<ScenarioId>")`. */
   scenario(id: string): string;
@@ -48,7 +53,8 @@ export interface AssetResolver {
   motion(entry: ModelManifestEntry, kind: "motion" | "facial", name: string, ctx: LoadContext): string | null;
   bgm(id: string, ctx: LoadContext): AssetUrls;
   se(id: string, ctx: LoadContext): AssetUrls;
-  voice(scenarioId: string, voiceId: string, ctx: LoadContext): AssetUrls;
+  /** `info` names the speaker, for trees that file voices by character. */
+  voice(scenarioId: string, voiceId: string, ctx: LoadContext, info: VoiceInfo): AssetUrls;
   background(id: string, ctx: LoadContext): AssetUrls;
   movie(name: string, ctx: LoadContext): string | null;
   /** Particle effects converted by tools/fx_convert.py: `<name>/effect.json`, `bg/index.json`, textures. */
@@ -89,7 +95,7 @@ export interface EpisodeAssets {
   motion(entry: ModelManifestEntry, kind: "motion" | "facial", name: string): string | null;
   bgm(id: string): string[];
   se(id: string): string[];
-  voice(scenarioId: string, voiceId: string): string[];
+  voice(scenarioId: string, voiceId: string, info?: VoiceInfo): string[];
   background(id: string): string[];
   movie(name: string): string | null;
   fx(path: string): string;
@@ -103,7 +109,7 @@ export function bindAssets(r: AssetResolver, ctx: LoadContext): EpisodeAssets {
     motion: (m, kind, name) => r.motion(m, kind, name, ctx),
     bgm: (id) => list(r.bgm(id, ctx)),
     se: (id) => list(r.se(id, ctx)),
-    voice: (s, v) => list(r.voice(s, v, ctx)),
+    voice: (s, v, info = {}) => list(r.voice(s, v, ctx, info)),
     background: (id) => list(r.background(id, ctx)),
     movie: (name) => r.movie(name, ctx),
     fx: (p) => r.fx(p),

@@ -5,7 +5,7 @@ export type { PlayerEvents, PlayerModes, PlayerOptions, TextScript } from "./Pjs
 export { DEFAULT_MENU, GAME_MENU } from "./scenario/menu";
 export type { MenuItem } from "./scenario/menu";
 export { createAssetResolver } from "./scenario/resolver";
-export type { AssetResolver, AssetUrls, LoadContext, ModelManifest, ModelManifestEntry } from "./scenario/resolver";
+export type { AssetResolver, AssetUrls, LoadContext, ModelManifest, ModelManifestEntry, VoiceInfo } from "./scenario/resolver";
 export { scriptLines } from "./scenario/script";
 export type { ScriptLine } from "./scenario/script";
 export { LABELS } from "./scenario/labels";
