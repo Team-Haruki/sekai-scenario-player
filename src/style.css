@@ -90,8 +90,9 @@
 .pjsk-dialogue.auto .pjsk-dlg-note { display: none; }
 
 /* UIPartsMenuButton (ScreenLayerScenario.prefab RightTop): btn_circle_h80 96x96
-   centred 64 from the top-right, MenuIcon icon_menu_story 52x12 rgb(68,68,102). */
-.pjsk-menu { position: absolute; right: 10.67px; top: 10.67px; width: 64px; height: 64px; z-index: 7;
+   centred 64 from the top-right, MenuIcon icon_menu_story 52x12 rgb(68,68,102).
+   Under the screen fades (z 6) as in the game; the open panel (z 8) stays above. */
+.pjsk-menu { position: absolute; right: 10.67px; top: 10.67px; width: 64px; height: 64px; z-index: 5;
   cursor: pointer; background: var(--pjsk-img-menu-menu-circle) center / 100% 100%; }
 .pjsk-menu::after { content: ""; position: absolute; left: 14.67px; top: 28px; width: 34.67px; height: 8px;
   background: rgb(68,68,102); -webkit-mask: var(--pjsk-img-menu-menu-dots) center / 100% 100%;
