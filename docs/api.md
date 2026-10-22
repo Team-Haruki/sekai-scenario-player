@@ -40,6 +40,16 @@ createPlayer(el, { assets, fonts: { name: bold, body: medium } });
 
 Missing game UI sprites (`<assets>/ui/`) are replaced by built-in SVG stand-ins automatically.
 
+For Chinese or Korean text, call `setTextScript("zh" | "ko")`. The talk window then uses `--pjsk-font-zh-name` / `--pjsk-font-zh-body` (or the `-ko-` pair), which default to the system CJK faces. To use your own, register them (for example `FontFace` slices with `unicodeRange`) and put them first:
+
+```css
+.pjsk-player { --pjsk-font-zh-name: "MyHanSans", "PingFang SC", sans-serif; --pjsk-font-zh-body: "MyHanSans", "PingFang SC", sans-serif; }
+```
+
+### Autoplay and voices
+
+Browsers may let `<audio>` play before the first user gesture while keeping the Web Audio context that drives lip-sync suspended. Until that context runs, the player plays voices directly, and mouths follow a synthetic level instead of the waveform. The first tap or key press anywhere starts the context.
+
 ### Live2D Cubism Core
 
 Cubism Core is licensed under Live2D's proprietary license and can't be bundled. When the first model loads and the page has no `window.Live2DCubismCore` yet, the player loads it from Live2D's CDN (`DEFAULT_CUBISM_CORE_URL`). To host it yourself, pass `cubismCoreUrl` or include it with a `<script>` tag first. Read [Live2D's license terms](https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html) before shipping it.
@@ -54,7 +64,10 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `auto` | `boolean` | `true` | Auto-advance lines (the menu's Auto) |
 | `locale` | `"zh" \| "ja" \| "en"` | `"zh"` | Language of the start overlay and the menu (`ja` is the game's own text) |
 | `labels` | `{ start?, loading?, menu? }` | — | Override individual strings |
-| `menu` | `boolean` | `true` | Show the ⋯ story menu |
+| `menu` | `boolean \| MenuItem[]` | `DEFAULT_MENU` | The ⋯ story menu: `false` hides it, a list picks its buttons. `DEFAULT_MENU` is fullscreen, auto, mute, fast, hide, log; `GAME_MENU` is the game's own panel (bookmark, consecutive and skip only look like the game) |
+| `muted` | `boolean` | `false` | Start muted |
+| `voice` | `boolean` | `true` | Play the voices |
+| `textScript` | `"ja" \| "latin" \| "zh" \| "ko"` | `"ja"` | Script of the text being shown, for its fonts (see `setTextScript`) |
 | `fonts` | `false \| { name?, body? }` | Source Han Sans Bold / Medium from `<assets>/fonts/` | Talk window font URLs: `name` for the name plate, `body` for lines. `false` registers none and uses system fonts |
 | `cubismCoreUrl` | `string` | Live2D's CDN | Where to load Cubism Core from if the page hasn't |
 | `resolution` | `number` | `min(devicePixelRatio, 2)` | Canvas resolution |
@@ -69,11 +82,17 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `advance()` | Same as tapping the stage: finish typing, or advance a line waiting for input |
 | `setAuto(on)` / `setFast(on)` / `setUiHidden(on)` | Auto / fast-forward / hide the UI |
 | `setLogActive(on)` | Light up the menu's Log button (the host owns the log it opens) |
+| `setMuted(on)` | Silence BGM, SE and voices; lip-sync keeps following the voice |
+| `setVoice(on)` | Play the voices or not; without them lines advance on the no-voice timing. Takes effect from the next line |
+| `setFullscreen(on)` / `toggleFullscreen()` | Fullscreen on the player, locked to landscape where the browser allows. Where pages can't go fullscreen (iPhone Safari) the player covers the viewport instead, turned sideways while the phone is held upright; Escape leaves it |
+| `setTextScript(script)` | The script of the text being shown. `"zh"` / `"ko"` switch the talk window, telops and captions to the `--pjsk-font-zh-*` / `--pjsk-font-ko-*` families with bold names and medium lines |
+| `setLabels({ start?, loading?, menu? })` | Change the start overlay and menu text |
+| `showLoading()` / `showMessage(text)` / `hideOverlay()` | Drive the overlay over the stage while the host prepares something itself, or to show its own error |
 | `stop()` | Stop and unload the current scenario |
 | `destroy()` | Destroy the player and remove its DOM |
 | `on(type, fn)` / `off(type, fn)` | Subscribe to events; `on` returns an unsubscribe function |
 
-Read-only properties: `scenario`, `auto`, `fast`, `uiHidden`, `assets` (the resolver), `root` (the player's root element).
+Read-only properties: `scenario`, `auto`, `fast`, `uiHidden`, `muted`, `voice`, `fullscreen`, `assets` (the resolver), `root` (the player's root element).
 
 ### Events
 
@@ -84,7 +103,7 @@ Read-only properties: `scenario`, `auto`, `fast`, `uiHidden`, `assets` (the reso
 | `progress` | `{ index, total }` | Snippet `index` started (also after a jump) |
 | `end` | `{ scenario }` | Playback reached the end |
 | `error` | `{ error }` | The scenario or the model manifest failed to load |
-| `mode` | `{ auto, fast, uiHidden }` | A mode changed (from the menu or the API) |
+| `mode` | `{ auto, fast, uiHidden, muted, voice, fullscreen }` | A mode changed (from the menu, a tap or the API) |
 | `log` | `{}` | The menu's Log button was pressed |
 
 ### Size

@@ -138,6 +138,8 @@ export class ScenarioPlayer {
   get isFast() {
     return this.fast;
   }
+  /** Play the voices (off: lines advance on the no-voice timing, mouths stay shut). */
+  voiceEnabled = true;
   setFast(on: boolean) {
     this.fast = on;
     this.clock.scale = on ? FAST_SCALE : 1;
@@ -522,7 +524,7 @@ export class ScenarioPlayer {
     }
 
     const fast = this.fast; // 早送り: no voice, text at once, short hold
-    const v = fast ? undefined : t.Voices?.[0];
+    const v = fast || !this.voiceEnabled ? undefined : t.Voices?.[0];
     let voiceEnded = !v;
     const voiceP = v
       ? this.audio
@@ -741,7 +743,7 @@ export class ScenarioPlayer {
           first: !isFst(this.scn.Snippets[i - 1]),
           last: !isFst(this.scn.Snippets[i + 1]),
           fast: this.fast,
-          playVoice: voice ? () => this.audio.playVoice(this.assets.voice(this.scn.ScenarioId, voice), 1) : undefined,
+          playVoice: voice && this.voiceEnabled ? () => this.audio.playVoice(this.assets.voice(this.scn.ScenarioId, voice), 1) : undefined,
           stopVoice: () => this.audio.stopVoice(),
         });
       }
