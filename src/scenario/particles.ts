@@ -21,6 +21,7 @@ const K = 2 / 3; // ref → stage px
 const UNIT = 540; // ref px per world unit (UIParticle prefabs override via effect.json "unit")
 const GRAVITY = 9.81;
 const DEG = Math.PI / 180;
+const MAX_BURSTS_PER_STEP = 64; // catch-up bound for a burst repeating faster than the frame rate
 
 // ── data types (effect.json) ─────────────────────────────────────────────────
 type Curve = { k: [number, number, number, number][]; w?: [number, number] } | null;
@@ -435,7 +436,6 @@ class Emitter {
     dt *= ps.simulationSpeed ?? 1;
     // emission
     if (this.emitting && !this.isSub) {
-      const prev = this.time;
       this.time += dt;
       if (this.time >= 0) {
         if (this.time >= this.duration) {
@@ -452,7 +452,7 @@ class Emitter {
             this.emitAcc -= 1;
             this.spawn();
           }
-          (em.m_Bursts || []).forEach((b: Json, i: number) => this.burst(b, i, prev, this.time));
+          (em.m_Bursts || []).forEach((b: Json, i: number) => this.burst(b, i));
         }
       }
     }
@@ -536,14 +536,16 @@ class Emitter {
 
   // cycleCount 0 repeats the burst every repeatInterval for as long as the
   // system emits (Unity: "0 means infinitely")
-  private burst(b: Json, i: number, prev: number, now: number) {
+  // Every repeat due by `now` fires, so a long frame or a short interval
+  // doesn't skip one (the loop restarts the count, see update()).
+  private burst(b: Json, i: number) {
     const cycles = b.cycleCount ?? 1;
-    const done = this.burstDone[i] ?? 0;
-    if (cycles > 0 && done >= cycles) return;
-    const at = b.time + done * (b.repeatInterval || 0.01);
-    if (now >= at && (prev < at || prev > now || done === 0)) {
+    for (let k = 0; k < MAX_BURSTS_PER_STEP; k++) {
+      const done = this.burstDone[i] ?? 0;
+      if (cycles > 0 && done >= cycles) return;
+      if (this.time < b.time + done * (b.repeatInterval || 0.01)) return;
       this.burstDone[i] = done + 1;
-      if (rand() > (b.probability ?? 1)) return;
+      if (rand() > (b.probability ?? 1)) continue;
       const n = Math.round(evalMM(b.countCurve, 0, rand()));
       for (let j = 0; j < n; j++) this.spawn();
     }
@@ -554,7 +556,6 @@ class Emitter {
     const em = s.em;
     const e = em.ps.EmissionModule;
     if (!e?.enabled) return;
-    const prev = s.t;
     s.t += dt;
     const dur = em.duration;
     if (s.t > dur && !em.ps.looping) return;
@@ -566,11 +567,11 @@ class Emitter {
       em.spawn(at);
     }
     (e.m_Bursts || []).forEach((b: Json, i: number) => {
-      const done = s.bursts[i] ?? 0;
       const cycles = b.cycleCount ?? 1; // 0: endless, as above
-      if (cycles > 0 && done >= cycles) return;
-      const t = b.time + done * (b.repeatInterval || 0.01);
-      if (s.t >= t && prev <= t) {
+      for (let k = 0; k < MAX_BURSTS_PER_STEP; k++) {
+        const done = s.bursts[i] ?? 0;
+        if (cycles > 0 && done >= cycles) return;
+        if (s.t < b.time + done * (b.repeatInterval || 0.01)) return;
         s.bursts[i] = done + 1;
         const n = Math.round(evalMM(b.countCurve, 0, rand()));
         for (let j = 0; j < n; j++) em.spawn(at);
