@@ -570,6 +570,7 @@ export class Stage {
       sc = { costume, cm, side: sideTo };
       this.chars.set(char2dId, sc);
     }
+    this.claimFade(sc.cm); // a Hide still on its way out stops here
     const d = sc.cm.display as any;
     this.fitModel(d, sideFrom, offFrom); // scale + place at the off-screen start
     sc.side = sideTo;
@@ -584,6 +585,7 @@ export class Stage {
   }
 
   private async showExisting(sc: StageChar, side: number, offsetX: number, motion: string, facial: string) {
+    this.claimFade(sc.cm); // a Hide still on its way out stops here
     const d = sc.cm.display as any;
     sc.side = side;
     this.fitModel(d, side, offsetX); // reposition (+ rescale for current mode)
@@ -603,17 +605,20 @@ export class Stage {
   async hide(char2dId: number, sideFrom: number, offFrom: number, sideTo: number, offTo: number, ms: number) {
     const sc = this.chars.get(char2dId);
     if (!sc) return;
+    const alive = this.claimFade(sc.cm);
     const d = sc.cm.display as any;
     if (sideFrom !== 0) this.fitModel(d, sideFrom, offFrom);
     let delay = Stage.HIDE_DELAY_MS;
     if (sideTo !== sideFrom) {
       this.charLayer.addChild(d); // SetCharacterDepth: in front while it leaves
       sc.side = sideTo;
-      void this.clock.tween(ms, d.position.x, this.placeX(sideTo, offTo), (v) => (d.position.x = v));
+      const x0 = d.position.x;
+      const x1 = this.placeX(sideTo, offTo);
+      void this.clock.tween(ms, x0, x1, (v) => (d.position.x = v), undefined, alive);
       delay = Math.max(0, ms * 0.5 - Stage.FADE_MS);
     }
     await this.clock.sleep(delay);
-    await this.fadeTo(sc.cm, 0);
+    if (alive()) await this.fadeTo(sc.cm, 0, alive);
   }
 
   async move(char2dId: number, toSide: number, offsetX: number, ms: number) {
@@ -639,7 +644,10 @@ export class Stage {
 
   // Movie (19): every shown character is hidden instantly first.
   hideAll() {
-    for (const sc of this.chars.values()) this.setOpacity(sc.cm, 0);
+    for (const sc of this.chars.values()) {
+      this.claimFade(sc.cm);
+      this.setOpacity(sc.cm, 0);
+    }
   }
 
   // Apply motion/facial to an already-present character (CharacterMotion / Talk).
@@ -738,9 +746,17 @@ export class Stage {
     d.renderable = v > 0;
     if (was !== v < 1) this.refreshFilters(cm);
   }
-  private fadeTo(cm: CharacterModel, to: number) {
+  // The newest fade owns the model, as FadeOpacity stops the running one: an
+  // Apper that comes while a Hide is still waiting or fading cancels it.
+  private fadeGen = new WeakMap<CharacterModel, number>();
+  private claimFade(cm: CharacterModel): () => boolean {
+    const gen = (this.fadeGen.get(cm) ?? 0) + 1;
+    this.fadeGen.set(cm, gen);
+    return () => this.fadeGen.get(cm) === gen;
+  }
+  private fadeTo(cm: CharacterModel, to: number, alive = this.claimFade(cm)) {
     if (cm.opacity === to) return Promise.resolve();
-    return this.clock.tween(Stage.FADE_MS, cm.opacity, to, (v) => this.setOpacity(cm, v));
+    return this.clock.tween(Stage.FADE_MS, cm.opacity, to, (v) => this.setOpacity(cm, v), undefined, alive);
   }
 
   // ── jump / teardown ───────────────────────────────────────────────────────
