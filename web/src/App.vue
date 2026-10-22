@@ -4,6 +4,8 @@ import { useDark, useMediaQuery, useStorage, useToggle } from "@vueuse/core";
 import {
   EyeOff,
   FastForward,
+  Maximize,
+  Minimize,
   FileBraces,
   Moon,
   PanelLeft,
@@ -206,6 +208,42 @@ function onDragOver(e: DragEvent) {
   dragging.value = true;
 }
 
+// fullscreen: the element API where there is one (and landscape on phones
+// that allow locking it), otherwise a fixed overlay (iPhone Safari)
+const stageBox = ref<HTMLElement>();
+const fullscreen = ref(false);
+async function toggleFullscreen() {
+  if (fullscreen.value) {
+    fullscreen.value = false;
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+    return;
+  }
+  fullscreen.value = true;
+  if (!stageBox.value?.requestFullscreen) return;
+  try {
+    await stageBox.value.requestFullscreen({ navigationUI: "hide" });
+    // left (exit button / Escape) while the request was pending: undo it
+    if (!fullscreen.value) return void (await document.exitFullscreen().catch(() => {}));
+    await (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.("landscape");
+  } catch {
+    /* overlay only */
+  }
+}
+const onFullscreenChange = () => {
+  if (!document.fullscreenElement) fullscreen.value = false;
+};
+const onKey = (e: KeyboardEvent) => {
+  if (e.key === "Escape" && fullscreen.value && !document.fullscreenElement) fullscreen.value = false;
+};
+onMounted(() => {
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+  addEventListener("keydown", onKey);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("fullscreenchange", onFullscreenChange);
+  removeEventListener("keydown", onKey);
+});
+
 const jump = (i: number) => player?.jumpTo(i);
 const setAuto = (on: boolean) => player?.setAuto(on);
 const setFast = (on: boolean) => player?.setFast(on);
@@ -217,7 +255,7 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
 <template>
   <TooltipProvider :delay-duration="300">
     <div
-      class="flex min-h-dvh flex-col lg:h-dvh lg:min-h-0"
+      class="flex h-dvh flex-col"
       @dragover="onDragOver"
       @dragleave.self="dragging = false"
       @drop.prevent="onDrop"
@@ -261,7 +299,7 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
       <main
         :class="
           cn(
-            'flex-1 lg:grid lg:min-h-0',
+            'flex min-h-0 flex-1 flex-col short-landscape:flex-row lg:grid',
             wide && showBrowser && showLog && 'lg:grid-cols-[320px_minmax(0,1fr)_360px]',
             wide && showBrowser && !showLog && 'lg:grid-cols-[320px_minmax(0,1fr)]',
             wide && !showBrowser && showLog && 'lg:grid-cols-[minmax(0,1fr)_360px]',
@@ -282,11 +320,35 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
         </aside>
 
         <!-- stage -->
-        <section class="flex min-h-0 flex-col items-center justify-center gap-3 p-3 sm:p-4 lg:p-6" aria-label="播放器">
-          <div class="w-full lg:w-[min(100%,calc((100dvh-14rem)*16/9))]">
-            <div ref="host" class="overflow-hidden rounded-xl bg-stage shadow-[0_12px_40px_-12px_rgba(0,0,34,.45)] ring-1 ring-black/5" />
+        <section
+          class="flex shrink-0 flex-col items-center gap-2 p-3 sm:p-4 lg:min-h-0 lg:justify-center lg:gap-3 lg:p-6"
+          aria-label="播放器"
+        >
+          <div
+            ref="stageBox"
+            :class="cn('relative', fullscreen ? 'fixed inset-0 z-50 grid place-items-center bg-black' : 'stage-width')"
+          >
+            <div
+              ref="host"
+              :class="
+                cn(
+                  'overflow-hidden bg-stage',
+                  fullscreen ? 'w-[min(100vw,calc(100dvh*16/9))]' : 'rounded-xl shadow-[0_12px_40px_-12px_rgba(0,0,34,.45)] ring-1 ring-black/5',
+                )
+              "
+            />
+            <Button
+              v-if="fullscreen"
+              variant="secondary"
+              size="icon-sm"
+              class="absolute top-3 left-3 opacity-80"
+              aria-label="退出全屏"
+              @click="toggleFullscreen"
+            >
+              <Minimize />
+            </Button>
           </div>
-          <div class="flex w-full flex-wrap items-center gap-2 lg:w-[min(100%,calc((100dvh-14rem)*16/9))]">
+          <div class="stage-width flex flex-wrap items-center gap-x-1 gap-y-1 sm:gap-2">
             <Tooltip v-if="wide">
               <TooltipTrigger as-child>
                 <Button variant="ghost" size="icon-sm" :aria-pressed="showBrowser" aria-label="剧情目录" @click="showBrowser = !showBrowser"><PanelLeft /></Button>
@@ -297,7 +359,8 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
             <Toggle :model-value="fast" size="sm" aria-label="快进" @update:model-value="setFast"><FastForward />快进</Toggle>
             <Button variant="ghost" size="sm" @click="hideUi"><EyeOff />隐藏界面</Button>
             <Button variant="ghost" size="sm" :disabled="!source" @click="restart"><RotateCcw />重播</Button>
-            <span class="ml-auto text-xs text-muted-foreground tabular-nums">
+            <Button variant="ghost" size="sm" @click="toggleFullscreen"><Maximize />全屏</Button>
+            <span class="ml-auto text-xs text-muted-foreground tabular-nums short-landscape:hidden">
               <template v-if="state === 'ended'">播放完毕</template>
               <template v-else-if="total">片段 {{ lineCount }}</template>
             </span>
@@ -319,15 +382,15 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
         </aside>
 
         <!-- narrow screens: transcript and browser below the stage -->
-        <Tabs v-if="!wide" default-value="log" class="gap-0 px-3 pb-3 sm:px-4">
+        <Tabs v-if="!wide" default-value="log" class="flex min-h-0 flex-1 flex-col gap-0 px-3 pb-3 sm:px-4 short-landscape:pt-3 short-landscape:pl-0">
           <TabsList class="w-full">
             <TabsTrigger value="log">台词</TabsTrigger>
             <TabsTrigger value="browse">剧情目录</TabsTrigger>
           </TabsList>
-          <TabsContent value="log" class="mt-2 h-[60dvh] overflow-hidden rounded-xl border bg-card">
+          <TabsContent value="log" class="mt-2 min-h-0 flex-1 overflow-hidden rounded-xl border bg-card">
             <Transcript :scenario="scenario" :progress="progress" :icon="icon" @jump="jump" />
           </TabsContent>
-          <TabsContent value="browse" class="mt-2 h-[70dvh] overflow-hidden rounded-xl border bg-card">
+          <TabsContent value="browse" class="mt-2 min-h-0 flex-1 overflow-hidden rounded-xl border bg-card">
             <StoryBrowser
               :catalog="catalog"
               :loading="catalogLoading"
@@ -350,6 +413,6 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
       </div>
     </div>
     <SettingsDialog v-model:open="settingsOpen" />
-    <Toaster rich-colors position="bottom-right" />
+    <Toaster rich-colors position="bottom-right" :mobile-offset="16" />
   </TooltipProvider>
 </template>

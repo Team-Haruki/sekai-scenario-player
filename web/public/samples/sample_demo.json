@@ -242,7 +242,7 @@
     }
    ],
    "WindowDisplayName": "瑞希",
-   "Body": "右边的台词列表可以直接点击跳转。",
+   "Body": "台词列表里的每一句都可以点击跳转。",
    "LipSync": 0,
    "MotionChangeFrom": 0,
    "Motions": [],
@@ -255,7 +255,7 @@
   {
    "TalkCharacters": [],
    "WindowDisplayName": "",
-   "Body": "示例到此结束。在左侧挑一集真正的剧情吧。",
+   "Body": "示例到此结束。去剧情目录挑一集真正的剧情吧。",
    "LipSync": 0,
    "MotionChangeFrom": 0,
    "Motions": [],

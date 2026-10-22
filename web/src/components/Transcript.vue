@@ -6,7 +6,7 @@ import type { ScenarioSceneData } from "pjsk-scenario-player";
 import { scriptLines } from "pjsk-scenario-player";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
+import { centerInScrollArea, cn } from "@/lib/utils";
 
 const props = defineProps<{
   scenario?: ScenarioSceneData;
@@ -55,7 +55,7 @@ function parts(body: string) {
 watch(current, async (cur) => {
   if (query.value || hovering.value) return;
   await nextTick();
-  root.value?.querySelector(`[data-line="${cur}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  centerInScrollArea(root.value?.querySelector(`[data-line="${cur}"]`));
 });
 </script>
 
