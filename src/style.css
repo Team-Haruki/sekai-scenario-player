@@ -97,7 +97,7 @@
 
 /* UIPartsMenuButton (ScreenLayerScenario.prefab RightTop): btn_circle_h80 96x96
    centred 64 from the top-right, MenuIcon icon_menu_story 52x12 rgb(68,68,102).
-   Under the screen fades (z 6) as in the game; the open panel (z 8) stays above. */
+   Under the screen fades (z 6) as in the game, and so is the open panel. */
 .pjsk-menu { position: absolute; right: 10.67px; top: 10.67px; width: 64px; height: 64px; z-index: 5;
   cursor: pointer; background: var(--pjsk-img-menu-menu-circle) center / 100% 100%; }
 .pjsk-menu::after { content: ""; position: absolute; left: 14.67px; top: 28px; width: 34.67px; height: 8px;
@@ -110,7 +110,7 @@
    rgba(68,68,102,.4) down to 72 below the last row (796 ref tall). Buttons
    btn_round_r16 (9-slice, 8px soft shadow inside the rect), labels RodinNTLG
    EB 32 rgb(68,68,102) (しおり rgb(85,85,119)); on = rgb(255,119,170). */
-.pjsk-menu-panel { position: absolute; right: 0; top: 0; width: 261.33px; height: var(--pjsk-menu-h, 525.33px); z-index: 8; overflow: hidden;
+.pjsk-menu-panel { position: absolute; right: 0; top: 0; width: 261.33px; height: var(--pjsk-menu-h, 525.33px); z-index: 5; overflow: hidden;
   background: rgba(68,68,102,.4); border-bottom-left-radius: 20px; cursor: default; }
 /* Open/Close clips: SizeDelta.y 0↔788 and Content alpha 0↔1 over 0.167s, flat tangents (smoothstep) */
 .pjsk-menu-panel.opening { animation: pjsk-smp-grow .167s cubic-bezier(.333,0,.667,1) both; }
@@ -139,8 +139,9 @@
 .pjsk-stage.ui-hidden .pjsk-dialogue, .pjsk-stage.ui-hidden .pjsk-menu,
 .pjsk-stage.ui-hidden .pjsk-menu-panel { visibility: hidden; }
 
-/* stacking inside the stage: canvas < movie(1) < talk window(2) < place info(5)
-   < cover fade(6) < telop(7) < menu / dialogs(8) < side fade(9) < start overlay(10) */
+/* stacking inside the stage: canvas < movie(1) < talk window(2) < place info,
+   menu button and panel(5) < cover fade(6) < telop(7) < dialogs(8) < side fade(9)
+   < start overlay(10). The menu is part of ScreenLayerScenario, under FrontCover. */
 .pjsk-dialogue { z-index: 2; }
 /* SideFadePlayer: black panel (screen + 32 ref each side) with 512-ref feathered
    strips (tex_transition_left/top; right/bottom mirrored), slid by translate. */
