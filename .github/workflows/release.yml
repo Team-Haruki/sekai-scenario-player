@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # dry run: gate + pack, no release
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Gate
+    permissions:
+      contents: read
+      checks: read
+    uses: seiunx-dev/ci-templates/.github/workflows/release-gate.yml@v1
+    with:
+      version-source: package-json
+
+  # ci-templates has no npm-pack job: build the library and pack the tarball
+  # Toolbox and other hosts install (dist/lib + src + fonts) here.
+  pack:
+    name: Pack
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm pack # runs `prepare` (build:lib)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-npm
+          path: pjsk-scenario-player-*.tgz
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [gate, pack]
+    if: needs.gate.outputs.is-tag == 'true'
+    permissions:
+      contents: write
+    uses: seiunx-dev/ci-templates/.github/workflows/gh-release.yml@v1
+    with:
+      tag: ${{ needs.gate.outputs.tag }}
+      prerelease: ${{ needs.gate.outputs.prerelease }}
+      body-path: docs/releases/{tag}.md

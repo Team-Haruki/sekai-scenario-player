@@ -88,6 +88,7 @@ All commit subjects follow:
 Workflows reuse the shared workflows in [seiunx-dev/ci-templates](https://github.com/seiunx-dev/ci-templates) (`@v1`); the files in `.github/workflows` are thin callers. Reuse the templates first; add a custom job only when a template genuinely cannot do it, with a comment saying why, and fix template gaps upstream.
 
 - `ci.yml` (`CI`): main pushes, PRs to main, manual dispatch. `Web` (`node-ci.yml`: `npm ci --ignore-scripts`, typecheck, build), `Workflow lint` (`actionlint.yml`), and `CI OK`, the aggregate job and the only check to require.
+- `release.yml` (`Release`): `v*` tags (dry run on manual dispatch). `release-gate.yml` checks the tag against `package.json` and waits for `CI OK`; a custom `Pack` job runs `npm pack` (the templates have no npm pack job); `gh-release.yml` publishes the tarball with the notes in `docs/releases/<tag>.md`. Flow: bump `version` in a PR → merge → tag `v<version>` on main.
 - `pages.yml` (`Pages`): `pages.yml` template; builds `dist/site` on every run, deploys to GitHub Pages on pushes to main. The template sets up bun only; the npm build uses the runner image's Node.
 - Dependabot (`.github/dependabot.yml`): weekly npm and GitHub Actions updates with the `[Chore] ` prefix. PixiJS stays on v7 (the Live2D plugin targets it).
 - Keep `permissions` minimal; pin third-party actions in custom steps to a full SHA.
