@@ -3,13 +3,16 @@
    reference canvas x 2/3) that the player scales to fit its host element, so
    all px values below are stage px. Injected once per document by the player. */
 
-.pjsk-player {
+/* defaults a host can override from any stylesheet (zero specificity) */
+:where(.pjsk-player) {
   /* the game's FOT-RodinNTLG Pro EB (names) / DB (lines); Source Han Sans Bold / Medium by default */
   --pjsk-font-name: "PJSK Sans Bold", "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif;
   --pjsk-font-body: "PJSK Sans Medium", "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif;
   /* Chinese UI labels: Rodin has no simplified hanzi, so use one CN bold face throughout */
   --pjsk-cjk-bold: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC",
     "Source Han Sans SC", sans-serif;
+}
+.pjsk-player {
   position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #000;
   user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
 }
@@ -230,7 +233,7 @@
 /* Text in other scripts (setTextScript): Chinese and Korean lines use these
    families (put host-registered faces first), with the clients' weights:
    bold names, medium lines. Japanese / Latin keep --pjsk-font-name / -body. */
-.pjsk-player {
+:where(.pjsk-player) {
   --pjsk-font-zh-name: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
   --pjsk-font-zh-body: var(--pjsk-font-zh-name);
   --pjsk-font-ko-name: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Source Han Sans K", sans-serif;

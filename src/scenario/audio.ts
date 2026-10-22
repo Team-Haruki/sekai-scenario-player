@@ -191,7 +191,9 @@ export class AudioManager {
         let routed = false;
         try {
           this.ensureCtx();
-          if (await this.graphRunning()) {
+          const running = await this.graphRunning();
+          if (this.voice !== a || done) return; // stopped while the context was starting
+          if (running) {
             let src = this.srcCache.get(a);
             if (!src) {
               src = this.ctx!.createMediaElementSource(a);
@@ -199,6 +201,7 @@ export class AudioManager {
             }
             src.connect(this.analyser!);
             this.voiceSrc = src;
+            a.muted = false; // the gain mutes routed voices (setMuted may have muted the element meanwhile)
             routed = true;
           }
         } catch (e) {

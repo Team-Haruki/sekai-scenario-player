@@ -353,7 +353,7 @@ export class PjskPlayer {
           if (!this.fsWanted) await document.exitFullscreen().catch(() => {});
           else await (screen.orientation as { lock?: (o: string) => Promise<void> } | undefined)?.lock?.("landscape").catch(() => {});
         } catch {
-          if (this.fsWanted) this.enterPseudoFullscreen();
+          if (this.fsWanted && !this.destroyed) this.enterPseudoFullscreen();
         }
       } else this.enterPseudoFullscreen();
     }
@@ -559,6 +559,7 @@ export class PjskPlayer {
     this.resize.disconnect();
     document.removeEventListener("fullscreenchange", this.onFullscreenChange);
     removeEventListener("keydown", this.onKey);
+    this.fsWanted = false; // a request still pending must not fall back to the overlay
     this.leavePseudoFullscreen();
     if (document.fullscreenElement === this.root) void document.exitFullscreen().catch(() => {});
     this.listeners.clear();
