@@ -3,7 +3,7 @@
 export { DEFAULT_FONTS, PjskPlayer } from "./PjskPlayer";
 export type { PlayerEvents, PlayerOptions } from "./PjskPlayer";
 export { createAssetResolver } from "./scenario/resolver";
-export type { AssetResolver, ModelManifest, ModelManifestEntry } from "./scenario/resolver";
+export type { AssetResolver, AssetUrls, LoadContext, ModelManifest, ModelManifestEntry } from "./scenario/resolver";
 export { scriptLines } from "./scenario/script";
 export type { ScriptLine } from "./scenario/script";
 export { LABELS } from "./scenario/labels";

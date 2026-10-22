@@ -16,7 +16,7 @@
 
 import * as PIXI from "pixi.js";
 import { CharacterModel, MotionIndex } from "./assets";
-import type { AssetResolver, ModelManifest } from "./resolver";
+import type { EpisodeAssets, ModelManifest } from "./resolver";
 import { modeScale, sideToFraction } from "./types";
 import { AMBIENT, EASE, HologramFilter, REF, ScenarioBlurFilter, makeBackground, makeShake } from "./camera";
 import type { Clock } from "./clock";
@@ -90,7 +90,7 @@ export class Stage {
     private app: PIXI.Application,
     private manifest: ModelManifest,
     private midx: MotionIndex,
-    private assets: AssetResolver,
+    private assets: EpisodeAssets,
     private clock: Clock,
   ) {
     this.w = app.screen.width;
@@ -153,17 +153,31 @@ export class Stage {
   }
 
   // ── background ────────────────────────────────────────────────────────────
-  private loadBgTexture(id: string): Promise<PIXI.Texture> {
-    const tex = PIXI.Texture.from(this.assets.background(id), { resourceOptions: { crossorigin: true } } as any);
+  // The first candidate that loads; an empty texture when none does.
+  private async loadBgTexture(id: string): Promise<PIXI.Texture> {
+    for (const url of this.assets.background(id)) {
+      const tex = await this.loadTexture(url);
+      if (tex) return tex;
+    }
+    console.warn("bg load failed", id);
+    return PIXI.Texture.EMPTY;
+  }
+
+  private loadTexture(url: string): Promise<PIXI.Texture | null> {
+    const tex = PIXI.Texture.from(url, { resourceOptions: { crossorigin: true } } as any);
     if (tex.baseTexture.valid) return Promise.resolve(tex);
     return new Promise((resolve) => {
       let done = false;
-      const fin = () => {
-        if (!done) ((done = true), resolve(tex));
+      const fin = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        // a failed texture stays in PIXI's cache: drop it so a later load retries
+        if (!ok) PIXI.Texture.removeFromCache(tex);
+        resolve(ok ? tex : null);
       };
-      tex.baseTexture.once("loaded", fin);
-      tex.baseTexture.once("error", () => (console.warn("bg load failed", id), fin()));
-      setTimeout(fin, 5000); // don't hang the timeline on a bad bg
+      tex.baseTexture.once("loaded", () => fin(true));
+      tex.baseTexture.once("error", () => fin(false));
+      setTimeout(() => fin(tex.baseTexture.valid), 5000); // don't hang the timeline on a bad bg
     });
   }
 
