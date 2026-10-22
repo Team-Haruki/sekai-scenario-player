@@ -18,6 +18,7 @@ import { ScenarioPlayer } from "./scenario/player";
 import { AssetResolver, ModelManifest, bindAssets, createAssetResolver } from "./scenario/resolver";
 import { UiSprites } from "./scenario/sprites";
 import { fetchJson } from "./scenario/net";
+import { type FileCount, type FileEntries, absUrl, countFiles, provide, unprovide } from "./scenario/files";
 import { Stage } from "./scenario/stage";
 import type { ScenarioSceneData } from "./scenario/types";
 
@@ -36,7 +37,7 @@ export interface PlayerOptions {
   auto?: boolean;
   /** Language of the start overlay and story menu. Default "zh". */
   locale?: Locale;
-  labels?: { start?: string; loading?: string; models?: string; menu?: Partial<MenuLabels> };
+  labels?: { start?: string; loading?: string; models?: string; files?: string; menu?: Partial<MenuLabels> };
   /**
    * The ⋯ story menu: `false` hides it, a list picks its buttons (GAME_MENU is
    * the game's own panel). Default DEFAULT_MENU: fullscreen, auto, mute, fast,
@@ -69,7 +70,7 @@ export interface PlayerEvents {
    * the `required` ones (on stage for the first lines) are in; the others keep
    * loading while it plays. `failed` lists the costumes that won't show.
    */
-  loading: { loaded: number; total: number; required: number; requiredLoaded: number; failed: string[] };
+  loading: LoadingProgress;
   /** The first costumes are loaded; playback starts now. */
   play: { scenario: ScenarioSceneData };
   /** Snippet `index` of `total` started (also fired after a jump). */
@@ -83,6 +84,34 @@ export interface PlayerEvents {
   log: Record<string, never>;
 }
 type Listener<K extends keyof PlayerEvents> = (e: PlayerEvents[K]) => void;
+
+/** How far a scenario's loading has got (the `loading` event). */
+export interface LoadingProgress {
+  /** costumes settled (loaded, failed or timed out) of all the scenario's costumes */
+  loaded: number;
+  total: number;
+  /** of those, the ones playback waits for (on stage for the first lines) */
+  required: number;
+  requiredLoaded: number;
+  /** costumes that won't show */
+  failed: string[];
+  /**
+   * Every file this load has asked for so far (the scenario, models, motions,
+   * textures, the first voice …): `started` grows as loading finds more,
+   * `bytes` counts what arrived, `provided` the files handed in (provideFiles).
+   */
+  files: FileCount;
+}
+
+/** The loading bar while the host drives it (setProgress): `loaded` of `total`, in files or bytes. */
+export interface HostProgress {
+  loaded: number;
+  total: number;
+  /** shown before the numbers, e.g. "Downloading" */
+  label?: string;
+  /** the numbers are bytes: shown in MB */
+  bytes?: boolean;
+}
 
 export interface PlayerModes {
   auto: boolean;
@@ -163,6 +192,10 @@ export class PjskPlayer {
   private resize: ResizeObserver;
   private loadSeq = 0;
   private destroyed = false;
+  // the current load's progress: costumes (from the player) and files (counted)
+  private progress?: { costumes?: Omit<LoadingProgress, "files">; files: FileCount; stop: () => void; frame?: number };
+  private hostProgress: HostProgress | null = null;
+  private loadFiles?: object; // owns what load({ files }) handed in, until the next load
 
   constructor(
     container: HTMLElement,
@@ -175,6 +208,7 @@ export class PjskPlayer {
       start: options.labels?.start ?? base.start,
       loading: options.labels?.loading ?? base.loading,
       models: options.labels?.models ?? base.models,
+      files: options.labels?.files ?? base.files,
       menu: { ...base.menu, ...options.labels?.menu },
     };
     this.modes = {
@@ -406,16 +440,33 @@ export class PjskPlayer {
   }
 
   /** Change the start overlay and menu text. */
-  setLabels(labels: { start?: string; loading?: string; models?: string; menu?: Partial<MenuLabels> }) {
+  setLabels(labels: { start?: string; loading?: string; models?: string; files?: string; menu?: Partial<MenuLabels> }) {
     this.labels = {
       start: labels.start ?? this.labels.start,
       loading: labels.loading ?? this.labels.loading,
       models: labels.models ?? this.labels.models,
+      files: labels.files ?? this.labels.files,
       menu: { ...this.labels.menu, ...labels.menu },
     };
     this.loadingEl.textContent = this.labels.loading;
     this.startBtn.textContent = this.labels.start;
     this.menu?.setLabels(this.labels.menu);
+  }
+
+  /**
+   * Files the host already has (downloaded itself, from a cache, an archive
+   * …), keyed by the URL the resolver gives for each; relative keys resolve
+   * against the page. The player reads these instead of downloading them,
+   * and a model's moc, textures and physics are looked up by their URLs
+   * relative to its model3. They stay until clearFiles() or destroy().
+   * (Fonts and UI sprites are read when the player is created.)
+   */
+  provideFiles(files: FileEntries) {
+    provide(this, files);
+  }
+  /** Forget files handed in with provideFiles(): these URLs, or all of them. */
+  clearFiles(urls?: Iterable<string>) {
+    unprovide(this, urls && [...urls].map(absUrl));
   }
 
   /** Show the loading spinner over the stage (e.g. while the host prepares a scenario). */
@@ -424,20 +475,75 @@ export class PjskPlayer {
     this.loadingEl.hidden = false;
     this.statusEl.textContent = "";
     this.startBtn.hidden = true;
-    this.showProgress(0, 0);
+    this.showProgress();
   }
-  // models loaded of those playback waits for (nothing to count: no bar)
-  private showProgress(done: number, total: number) {
-    const on = total > 0 && !this.loadingEl.hidden;
+
+  /**
+   * Drive the loading bar yourself, e.g. while you download a scenario's
+   * files to hand them in (provideFiles): call showLoading() first. `null`
+   * gives the bar back to the player, as load() does.
+   */
+  setProgress(p: HostProgress | null) {
+    this.hostProgress = p;
+    this.showProgress();
+  }
+
+  // The host's numbers while it drives the bar; otherwise costumes loaded of
+  // those playback waits for, the files and the MB so far.
+  private showProgress() {
+    const mb = (b: number) => (b / 1048576).toFixed(1);
+    let ratio = 0;
+    const parts: string[] = [];
+    const hp = this.hostProgress;
+    if (hp) {
+      ratio = hp.total > 0 ? hp.loaded / hp.total : 0;
+      if (hp.label) parts.push(hp.label);
+      if (hp.total > 0) parts.push(hp.bytes ? `${mb(hp.loaded)} / ${mb(hp.total)} MB` : `${hp.loaded} / ${hp.total}`);
+    } else if (this.progress) {
+      const { costumes: c, files: f } = this.progress;
+      if (c?.required) parts.push(`${this.labels.models} ${c.requiredLoaded} / ${c.required}`);
+      if (f.started) parts.push(`${this.labels.files} ${f.done} / ${f.started}`);
+      if (f.bytes) parts.push(`${mb(f.bytes)} MB`);
+      ratio = c?.required ? c.requiredLoaded / c.required : f.started ? f.done / f.started : 0;
+    }
+    const on = parts.length > 0 && !this.loadingEl.hidden;
     this.progressEl.hidden = !on;
-    this.progressText.textContent = on ? `${this.labels.models} ${done} / ${total}` : "";
-    (this.progressEl.firstElementChild as HTMLElement).style.width = `${total ? (100 * done) / total : 0}%`;
+    this.progressText.textContent = on ? parts.join(" · ") : "";
+    (this.progressEl.firstElementChild as HTMLElement).style.width = `${Math.min(1, ratio) * 100}%`;
+  }
+
+  // Count this load's files; the bar and the `loading` event follow, once a frame.
+  private startCounting() {
+    this.stopCounting();
+    const counting = countFiles(() => {
+      if (this.progress !== state || state.frame !== undefined) return;
+      state.frame = requestAnimationFrame(() => {
+        state.frame = undefined;
+        this.reportProgress();
+      });
+    });
+    const state: NonNullable<PjskPlayer["progress"]> = { files: counting.count, stop: counting.stop };
+    this.progress = state;
+  }
+  private stopCounting() {
+    const p = this.progress;
+    if (!p) return;
+    p.stop();
+    if (p.frame !== undefined) cancelAnimationFrame(p.frame);
+    this.progress = undefined;
+  }
+  private reportProgress() {
+    const p = this.progress;
+    if (!p) return;
+    this.showProgress();
+    const c = p.costumes ?? { loaded: 0, total: 0, required: 0, requiredLoaded: 0, failed: [] };
+    this.emit("loading", { ...c, files: { ...p.files } });
   }
   /** Show a message over the stage instead of the scenario (an error, a prompt). */
   showMessage(text: string) {
     this.overlay.hidden = false;
     this.loadingEl.hidden = true;
-    this.showProgress(0, 0);
+    this.showProgress();
     this.startBtn.hidden = true;
     this.statusEl.textContent = text;
   }
@@ -470,12 +576,17 @@ export class PjskPlayer {
       autoplay?: boolean | "auto";
       /** Handed to every per-episode resolver call as `ctx.data` (episode kind, bundle, an asset index …). */
       context?: unknown;
+      /** Files for this scenario the host already has, as for provideFiles(); dropped at the next load. */
+      files?: FileEntries;
     } = {},
   ): Promise<void> {
     const seq = ++this.loadSeq;
     this.teardown();
+    if (opts.files) provide((this.loadFiles = {}), opts.files);
     this.menu?.close();
     this.setUiHidden(false);
+    this.hostProgress = null;
+    this.startCounting();
     this.showLoading();
     this.audio.arm();
     void getLive2D().catch(() => {}); // the Live2D runtime loads alongside the scenario (a failure surfaces on the first model)
@@ -524,12 +635,14 @@ export class PjskPlayer {
     player.setFast(this.modes.fast);
     player.onProgress = (index, total) => this.emit("progress", { index, total });
     player.onLoadProgress = (p) => {
-      if (this.session?.player !== player) return;
-      this.emit("loading", p);
-      this.showProgress(p.requiredLoaded, p.required);
+      if (this.session?.player !== player || !this.progress) return;
+      this.progress.costumes = p;
+      this.reportProgress();
     };
     player.onReady = () => {
       if (this.session?.player !== player) return;
+      this.reportProgress();
+      this.stopCounting();
       this.overlay.hidden = true;
       this.emit("play", { scenario: scn });
     };
@@ -594,6 +707,7 @@ export class PjskPlayer {
     this.leavePseudoFullscreen();
     if (document.fullscreenElement === this.root) void document.exitFullscreen().catch(() => {});
     this.listeners.clear();
+    unprovide(this);
     this.audio.destroy();
     this.app.destroy(false, { children: true });
     this.root.remove();
@@ -612,6 +726,9 @@ export class PjskPlayer {
   }
 
   private teardown() {
+    this.stopCounting();
+    if (this.loadFiles) unprovide(this.loadFiles);
+    this.loadFiles = undefined;
     const s = this.session;
     if (!s) return;
     this.session = undefined;
@@ -622,6 +739,7 @@ export class PjskPlayer {
   }
 
   private fail(e: Error) {
+    this.stopCounting();
     console.error(e);
     this.showMessage("❌ " + e.message);
     this.emit("error", { error: e });

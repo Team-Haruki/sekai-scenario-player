@@ -16,6 +16,7 @@
 // ForceStop = removed at once.
 
 import * as PIXI from "pixi.js";
+import { fileFetch, fileUrl } from "./files";
 
 const K = 2 / 3; // ref → stage px
 const UNIT = 540; // ref px per world unit (UIParticle prefabs override via effect.json "unit")
@@ -772,7 +773,7 @@ function loadTex(url: string, premultiplied: boolean) {
   const key = url + (premultiplied ? "#pm" : "#npm");
   let t = texCache.get(key);
   if (!t) {
-    t = PIXI.Texture.from(url, { alphaMode: premultiplied ? PIXI.ALPHA_MODES.PMA : PIXI.ALPHA_MODES.NPM } as any);
+    t = PIXI.Texture.from(fileUrl(url), { alphaMode: premultiplied ? PIXI.ALPHA_MODES.PMA : PIXI.ALPHA_MODES.NPM } as any);
     texCache.set(key, t);
   }
   return t;
@@ -1122,7 +1123,7 @@ export class FxManager {
   private load(name: string) {
     let p = this.cache.get(name);
     if (!p) {
-      p = fetch(this.url(`${name}/effect.json`))
+      p = fileFetch(this.url(`${name}/effect.json`))
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null);
       this.cache.set(name, p);
@@ -1170,7 +1171,7 @@ export class FxManager {
     if (id === this.bgId) return;
     this.bgId = id;
     for (const l of this.live) if (l.name === BG_KEY) l.fx.forceStop();
-    this.bgIndex ??= fetch(this.url("bg/index.json"))
+    this.bgIndex ??= fileFetch(this.url("bg/index.json"))
       .then((r) => (r.ok ? r.json() : []))
       .catch(() => [])
       .then((ids: string[]) => new Set(ids));

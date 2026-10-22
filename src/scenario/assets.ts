@@ -2,8 +2,8 @@
 // (held facials, |sin| eye-blink, ParamBreath, lip-sync smoothing).
 
 import type { Live2DModel } from "@sekai-world/pixi-live2d-display-mulmotion/cubism4";
-import { aheadJson, fetchAhead, getLive2D } from "./live2d";
-import { fetchJson } from "./net";
+import { BIG_FILE_TIMEOUT, aheadJson, fetchAhead, getLive2D } from "./live2d";
+import { fetchBlob, fetchJson } from "./net";
 import type { EpisodeAssets, ModelManifest } from "./resolver";
 import type { ScenarioSceneData } from "./types";
 
@@ -124,8 +124,14 @@ export class CharacterModel {
       const physics = assets.physics(m);
       if (physics === null) delete settings.FileReferences.Physics;
       else if (physics !== undefined) settings.FileReferences.Physics = physics;
-      if (settings.FileReferences.Physics)
-        releases.push(fetchAhead([new URL(settings.FileReferences.Physics, new URL(modelUrl, location.href)).href]));
+      const near = (path: string) => new URL(path, new URL(modelUrl, location.href)).href;
+      if (settings.FileReferences.Physics) releases.push(fetchAhead([near(settings.FileReferences.Physics)]));
+      // the textures load now, beside the runtime, through net.ts (handed-in
+      // files, the load count); the library gets object URLs for them
+      const textures: Promise<string>[] = (settings.FileReferences.Textures ?? []).map((t: string) =>
+        fetchBlob(near(t), { timeoutMs: BIG_FILE_TIMEOUT }).then((b) => URL.createObjectURL(b)),
+      );
+      releases.push(() => void Promise.allSettled(textures).then((rs) => rs.forEach((r) => r.status === "fulfilled" && URL.revokeObjectURL(r.value))));
 
       settings.FileReferences.Motions = {
         Motion: motionClips.map(([n, url]) => ({
@@ -143,8 +149,13 @@ export class CharacterModel {
       };
       settings.FileReferences.Expressions = {};
 
-      const { Live2DModel } = await runtime;
-      const display = (await Live2DModel.from(settings, {
+      settings.FileReferences.Textures = await Promise.all(textures);
+      const { Live2DModel, Cubism4ModelSettings } = await runtime;
+      // the library's url.resolve() mangles blob: URLs ("blob:http//…"): keep them as they are
+      const model = new Cubism4ModelSettings(settings);
+      const resolve = model.resolveURL.bind(model);
+      model.resolveURL = (path: string) => (path.startsWith("blob:") ? path : resolve(path));
+      const display = (await Live2DModel.from(model, {
         autoHitTest: false,
         autoFocus: false,
       })) as any;
@@ -327,6 +338,7 @@ export class CharacterModel {
 
   destroy() {
     this.releaseAhead?.();
-    (this.display as any).destroy();
+    // its textures are its own (loaded from object URLs), so they go with it
+    (this.display as any).destroy({ texture: true, baseTexture: true });
   }
 }

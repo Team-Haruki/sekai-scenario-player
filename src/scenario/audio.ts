@@ -14,6 +14,7 @@
 // always streams from one of two primed elements (two for the crossfade).
 
 import { withTimeout } from "./net";
+import { fileFetch, fileUrl } from "./files";
 
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 const FETCH_TIMEOUT = 15_000;
@@ -27,7 +28,7 @@ async function fetchFirst(urls: string[]): Promise<Blob | null> {
   for (const url of urls)
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT) });
+        const r = await fileFetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT) });
         if (r.ok) return await r.blob();
         if (r.status < 500) break; // not in this folder: the next candidate
       } catch {
@@ -59,7 +60,7 @@ class Track {
     this.el.addEventListener("error", () => {
       if (!this.urls.length) return; // stopped, or the priming clip
       if (++this.i < this.urls.length) {
-        this.el.src = this.urls[this.i];
+        this.el.src = fileUrl(this.urls[this.i]);
         if (this.wanted) void this.play();
       } else {
         const f = this.failed;
@@ -75,7 +76,7 @@ class Track {
     this.i = 0;
     this.failed = failed;
     this.wanted = false;
-    if (urls.length) this.el.src = urls[0];
+    if (urls.length) this.el.src = fileUrl(urls[0]);
     else queueMicrotask(() => failed?.());
   }
 
