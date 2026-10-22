@@ -12,6 +12,7 @@
 
 import { EASE, REF, sideFade } from "./camera";
 import type { Clock } from "./clock";
+import { fileUrl } from "./files";
 
 export type RGBA = [number, number, number, number];
 
@@ -185,7 +186,7 @@ export class Effects {
     const v = this.movieEl;
     await this.colorFade([0, 0, 0, 1], 500);
     hideUi(true);
-    v.src = url;
+    v.src = fileUrl(url);
     v.muted = false;
     const ok = await new Promise<boolean>((res) => {
       v.oncanplay = () => res(true);

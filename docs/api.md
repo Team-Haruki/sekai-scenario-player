@@ -71,7 +71,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `autoplay` | `boolean \| "auto"` | `"auto"` | Start playing once loaded. `"auto"` does so when the browser allows sound without a click and shows the start button otherwise; `false` always shows the button |
 | `auto` | `boolean` | `true` | Auto-advance lines (the menu's Auto) |
 | `locale` | `"zh" \| "ja" \| "en"` | `"zh"` | Language of the start overlay and the menu (`ja` is the game's own text) |
-| `labels` | `{ start?, loading?, models?, menu? }` | — | Override individual strings (`models` prefixes the loading count) |
+| `labels` | `{ start?, loading?, models?, files?, menu? }` | — | Override individual strings (`models` and `files` prefix the loading counts) |
 | `menu` | `boolean \| MenuItem[]` | `DEFAULT_MENU` | The ⋯ story menu: `false` hides it, a list picks its buttons. `DEFAULT_MENU` is fullscreen, auto, mute, fast, hide, log; `GAME_MENU` is the game's own panel (bookmark, consecutive and skip only look like the game) |
 | `muted` | `boolean` | `false` | Start muted |
 | `voice` | `boolean` | `true` | Play the voices |
@@ -84,7 +84,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 
 | Method | Description |
 |---|---|
-| `load(scenario, { autoplay?, context? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). `context` reaches every per-episode resolver call as `ctx.data`. Resolves once playback starts or the start button shows |
+| `load(scenario, { autoplay?, context?, files? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). `context` reaches every per-episode resolver call as `ctx.data`. `files` are this scenario's files the host already has (see [Handing files in](#handing-files-in)), dropped at the next load. Resolves once playback starts or the start button shows |
 | `play()` | Start the loaded scenario. Call it from a user gesture when the browser blocked autoplay |
 | `jumpTo(index)` | Restart at snippet `index`, with the stage rebuilt as it was at that point |
 | `advance()` | Same as tapping the stage: finish typing, or advance a line waiting for input |
@@ -94,8 +94,10 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `setVoice(on)` | Play the voices or not; without them lines advance on the no-voice timing. Takes effect from the next line |
 | `setFullscreen(on)` / `toggleFullscreen()` | Fullscreen on the player, locked to landscape where the browser allows. Where pages can't go fullscreen (iPhone Safari) the player covers the viewport instead, turned sideways while the phone is held upright; Escape leaves it |
 | `setTextScript(script)` | The script of the text being shown. `"zh"` / `"ko"` switch the talk window, telops and captions to the `--pjsk-font-zh-*` / `--pjsk-font-ko-*` families with bold names and medium lines |
-| `setLabels({ start?, loading?, menu? })` | Change the start overlay and menu text |
+| `setLabels({ start?, loading?, models?, files?, menu? })` | Change the start overlay and menu text |
 | `showLoading()` / `showMessage(text)` / `hideOverlay()` | Drive the overlay over the stage while the host prepares something itself, or to show its own error |
+| `setProgress({ loaded, total, label?, bytes? } \| null)` | Drive the loading bar yourself (after `showLoading()`), e.g. while you download files to hand in. `bytes: true` shows the numbers in MB. `null`, or the next `load()`, gives the bar back to the player |
+| `provideFiles(files)` / `clearFiles(urls?)` | Hand in files the host already has, or forget them (all when `urls` is omitted); see [Handing files in](#handing-files-in) |
 | `stop()` | Stop and unload the current scenario |
 | `destroy()` | Destroy the player and remove its DOM |
 | `on(type, fn)` / `off(type, fn)` | Subscribe to events; `on` returns an unsubscribe function |
@@ -107,7 +109,7 @@ Read-only properties: `scenario`, `auto`, `fast`, `uiHidden`, `muted`, `voice`, 
 | Event | Payload | When |
 |---|---|---|
 | `load` | `{ scenario }` | The scenario was fetched and its stage built (models may still be loading) |
-| `loading` | `{ loaded, total, required, requiredLoaded, failed }` | A costume finished loading, failed or timed out. Playback waits only for the `required` ones; `failed` lists costumes that won't show |
+| `loading` | `{ loaded, total, required, requiredLoaded, failed, files }` | Loading moved on: a costume finished loading, failed or timed out, or files arrived (at most once a frame). Playback waits only for the `required` costumes; `failed` lists costumes that won't show. `files` is `{ started, done, bytes, provided }` for every file this load asked for: the scenario, models, motions, textures, the first voice. `started` grows as loading finds more files, and `provided` counts the ones handed in |
 | `play` | `{ scenario }` | The first costumes are loaded; playback starts |
 | `progress` | `{ index, total }` | Snippet `index` started (also after a jump) |
 | `end` | `{ scenario }` | Playback reached the end |
@@ -129,13 +131,33 @@ If you give `.pjsk-player` another height, the stage is centred and letterboxed.
 
 The player doesn't wait for every model before it starts.
 
-- **What it waits for:** the costumes on stage before the third line of dialogue. The spinner shows their count and a progress bar.
+- **What it waits for:** the costumes on stage before the third line of dialogue, and the first line's voice (5 s at most). Under the spinner the bar follows those costumes, and the text counts them, the files loaded of those asked for, and the MB so far.
 - **The rest** load while the episode plays, three at a time.
 - **Time limits and retries:** nothing waits forever.
   - JSON fetches (scenario, manifest, model3, facials) time out after 15 s and are retried twice (network errors and 5xx).
   - A costume that fails to load is retried once.
   - A costume that takes longer than 30 s is given up on. It is still used if it arrives later.
   - An appearance waits at most 12 s for a costume that is still loading. Otherwise that appearance is skipped and the timeline carries on.
+
+## Handing files in
+
+A host that downloads a scenario's files itself (from an archive, its own cache, a service worker) can hand them to the player as `Blob`s, keyed by the URL the resolver gives for each. The player then reads them instead of making the request. Keys may be relative; they resolve against the page.
+
+```ts
+player.showLoading();
+const files = new Map<string, Blob>();
+for (const [i, url] of urls.entries()) {
+  files.set(url, await (await fetch(url)).blob());
+  player.setProgress({ label: "Downloading", loaded: i + 1, total: urls.length });
+}
+await player.load("event_145_07", { files }); // or player.provideFiles(files), kept until clearFiles()
+```
+
+- Every file a scenario loads is looked up: the scenario, the manifest, a model's model3 and the moc, textures and physics it names (by their URL relative to the model3), motions and facials, backgrounds, voices, SEs, BGM, movies and effects.
+- Whatever isn't handed in is fetched as usual.
+- Fonts and UI sprites are read when the player is created, before files can be handed in. Point `fonts` and the resolver's `ui()` at your copies (`blob:` URLs work).
+- `load({ files })` holds the files until the next load. `provideFiles()` holds them until `clearFiles()` or `destroy()`.
+- The registry is shared by the players on a page.
 
 ## Asset resolution
 

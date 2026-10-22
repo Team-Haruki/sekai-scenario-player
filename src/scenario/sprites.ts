@@ -4,6 +4,8 @@
 // SVG of the same size and role takes its place. Masks (dots, icons) are drawn
 // black-on-transparent: only their alpha matters.
 
+import { fileUrl } from "./files";
+
 const svg = (w: number, h: number, body: string) =>
   "data:image/svg+xml," +
   encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${body}</svg>`);
@@ -69,7 +71,7 @@ export class UiSprites {
 
   // apply(url) with the game sprite now, and again with the stand-in if it fails to load
   bind(path: string, apply: (url: string) => void) {
-    const url = this.resolve(path);
+    const url = fileUrl(this.resolve(path));
     apply(url);
     const fallback = FALLBACKS[path];
     if (fallback) void this.probe(url).then((ok) => ok || apply(fallback));

@@ -21,6 +21,7 @@ import { modeScale, sideToFraction } from "./types";
 import { AMBIENT, EASE, HologramFilter, REF, ScenarioBlurFilter, makeBackground, makeShake } from "./camera";
 import type { Clock } from "./clock";
 import { withTimeout } from "./net";
+import { countLoad, fileUrl } from "./files";
 
 // ScenarioStudioCamera.AttachEffect → SetColorEffect(monochrome, toneRatio,
 // influence) on the MonotoneColord camera material (constants from 6.8.1):
@@ -241,12 +242,13 @@ export class Stage {
   // fromURL, not from(): from() starts the load itself and nothing catches its
   // rejection, so each missing candidate was an unhandled "Event" error
   private async loadTexture(url: string): Promise<PIXI.Texture | null> {
-    const load = PIXI.Texture.fromURL(url, { resourceOptions: { crossorigin: true } });
+    const src = fileUrl(url);
+    const load = countLoad(PIXI.Texture.fromURL(src, { resourceOptions: { crossorigin: true } }));
     const tex = await withTimeout(load, 5000, null); // don't hang the timeline on a bad bg
     // a failed texture stays in PIXI's cache: drop it so a later load retries
     if (!tex) {
-      PIXI.Texture.removeFromCache(url);
-      PIXI.BaseTexture.removeFromCache(url);
+      PIXI.Texture.removeFromCache(src);
+      PIXI.BaseTexture.removeFromCache(src);
     }
     return tex;
   }
