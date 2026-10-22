@@ -222,6 +222,8 @@ async function toggleFullscreen() {
   if (!stageBox.value?.requestFullscreen) return;
   try {
     await stageBox.value.requestFullscreen({ navigationUI: "hide" });
+    // left (exit button / Escape) while the request was pending: undo it
+    if (!fullscreen.value) return void (await document.exitFullscreen().catch(() => {}));
     await (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.("landscape");
   } catch {
     /* overlay only */
