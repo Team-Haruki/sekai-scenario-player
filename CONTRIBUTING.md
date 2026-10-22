@@ -58,6 +58,13 @@ Commit subjects follow `[Type] Short description`:
 - `ci.yml`: install, typecheck and build through `node-ci.yml`, workflow lint through `actionlint.yml`, and the **CI OK** aggregate job, the only check to require.
 - `pages.yml`: builds the preview site on every run and deploys it to GitHub Pages from `main`.
 
+SonarQube Cloud analysis runs through `sonar.yml` in CI after the web checks, using
+the organization's `SONAR_TOKEN` secret and `sonar-project.properties`. Disable
+SonarQube Cloud automatic analysis to avoid duplicate/conflicting scans. Fork and
+Dependabot PRs skip the scan because they cannot access the secret. The repository
+does not yet produce coverage reports. The scan upload participates in **CI OK**;
+SonarQube Cloud reports the quality gate separately without suppressing findings.
+
 Reuse a template first. Add a custom job or step only when no template can do it, keep it in the caller and comment why; template bugs and gaps are fixed upstream in ci-templates. Dependabot opens weekly `[Chore]` PRs for npm and GitHub Actions.
 
 ## Versions and releases
