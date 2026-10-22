@@ -2,7 +2,7 @@
 // (held facials, |sin| eye-blink, ParamBreath, lip-sync smoothing).
 
 import type { Live2DModel } from "@sekai-world/pixi-live2d-display-mulmotion/cubism4";
-import { getLive2D } from "./live2d";
+import { aheadJson, fetchAhead, getLive2D } from "./live2d";
 import { fetchJson } from "./net";
 import type { EpisodeAssets, ModelManifest } from "./resolver";
 import type { ScenarioSceneData } from "./types";
@@ -64,6 +64,7 @@ export class CharacterModel {
   // default breath rocks ParamAngleX ±15° = the wrong "swaying" — disabled.)
   private static readonly BREATH_CYCLE = 3.0; // s
   private static readonly BREATH_INFLUENCE = 0.5; // game packs breathInfluence=0.5
+  private releaseAhead?: () => void; // drops this model's fetchAhead() files
   constructor(public readonly display: Live2DModel) {}
 
   // lip-sync target (already curved/clamped by the player); null = mouth closed.
@@ -95,14 +96,10 @@ export class CharacterModel {
     const m = manifest[costume];
     if (!m) throw new Error(`no manifest entry for costume ${costume}`);
 
-    const modelUrl = assets.model(m);
-    const settings: any = await fetchJson(modelUrl);
-    settings.url = modelUrl; // textures / physics resolve relative to it
-    // the host may point physics elsewhere (exports that renamed the file) or drop it
-    const physics = assets.physics(m);
-    if (physics === null) delete settings.FileReferences.Physics;
-    else if (physics !== undefined) settings.FileReferences.Physics = physics;
-
+    // Everything but the moc and textures is known before the model3 arrives:
+    // the runtime, the clips and (once the model3 names it) the physics load
+    // alongside instead of one after another.
+    const runtime = getLive2D();
     // clips the resolver has no file for are left out (startMotion then skips them)
     const clips = (kind: "motion" | "facial", names: Set<string> | undefined) =>
       [...(names ?? [])].flatMap((n) => {
@@ -111,29 +108,56 @@ export class CharacterModel {
       });
     const motionClips = clips("motion", midx.motions.get(char2dId));
     const facialClips = clips("facial", midx.facials.get(char2dId));
+    const releases = [fetchAhead([...motionClips, ...facialClips].map(([, url]) => url))];
+    const release = () => releases.forEach((r) => r());
+
+    try {
+      const modelUrl = assets.model(m);
+      const settings: any = await fetchJson(modelUrl);
+      settings.url = modelUrl; // textures / physics resolve relative to it
+      // the host may point physics elsewhere (exports that renamed the file) or drop it
+      const physics = assets.physics(m);
+      if (physics === null) delete settings.FileReferences.Physics;
+      else if (physics !== undefined) settings.FileReferences.Physics = physics;
+      if (settings.FileReferences.Physics)
+        releases.push(fetchAhead([new URL(settings.FileReferences.Physics, new URL(modelUrl, location.href)).href]));
+
+      settings.FileReferences.Motions = {
+        Motion: motionClips.map(([n, url]) => ({
+          Name: n,
+          File: url,
+          FadeInTime: 0.5, // ChangeMotionCore default
+          FadeOutTime: 0.5,
+        })),
+        Expression: facialClips.map(([n, url]) => ({
+          Name: n,
+          File: url,
+          FadeInTime: 0.25, // ChangeModelFacial GetBlendInTime default
+          FadeOutTime: 0.25,
+        })),
+      };
+      settings.FileReferences.Expressions = {};
+
+      const { Live2DModel } = await runtime;
+      const display = (await Live2DModel.from(settings, {
+        autoHitTest: false,
+        autoFocus: false,
+      })) as any;
+      return CharacterModel.setup(display, motionClips, facialClips, release);
+    } catch (e) {
+      release();
+      throw e;
+    }
+  }
+
+  private static setup(
+    display: any,
+    motionClips: (readonly [string, string])[],
+    facialClips: (readonly [string, string])[],
+    release: () => void,
+  ): CharacterModel {
     const motionNames = motionClips.map(([n]) => n);
     const facialNames = facialClips.map(([n]) => n);
-    settings.FileReferences.Motions = {
-      Motion: motionClips.map(([n, url]) => ({
-        Name: n,
-        File: url,
-        FadeInTime: 0.5, // ChangeMotionCore default
-        FadeOutTime: 0.5,
-      })),
-      Expression: facialClips.map(([n, url]) => ({
-        Name: n,
-        File: url,
-        FadeInTime: 0.25, // ChangeModelFacial GetBlendInTime default
-        FadeOutTime: 0.25,
-      })),
-    };
-    settings.FileReferences.Expressions = {};
-
-    const { Live2DModel } = await getLive2D();
-    const display = (await Live2DModel.from(settings, {
-      autoHitTest: false,
-      autoFocus: false,
-    })) as any;
     display.internalModel.extendParallelMotionManager(2);
     // kill the lib's default breath (rocks ParamAngleX ±15° — not how pjsk
     // breathes); we drive ParamBreath ourselves below.
@@ -144,6 +168,7 @@ export class CharacterModel {
     }
 
     const cm = new CharacterModel(display);
+    cm.releaseAhead = release;
     motionNames.forEach((n, i) => cm.motionIdx.set(n, i));
     facialNames.forEach((n, i) => cm.facialIdx.set(n, i));
     for (const [n, url] of facialClips) cm.facialUrls.set(n, url);
@@ -192,11 +217,16 @@ export class CharacterModel {
   async preloadMotions() {
     // the parallel tracks share the main manager's definitions and motion cache
     const mm = (this.display as any).internalModel.motionManager;
-    await Promise.all([
-      ...[...this.facialIdx.values()].map((i) => mm.loadMotion("Expression", i)),
-      ...[...this.motionIdx.values()].map((i) => mm.loadMotion("Motion", i)),
-      ...[...this.facialIdx.keys()].map((n) => this.holdFacial(n, false)),
-    ]);
+    try {
+      await Promise.all([
+        ...[...this.facialIdx.values()].map((i) => mm.loadMotion("Expression", i)),
+        ...[...this.motionIdx.values()].map((i) => mm.loadMotion("Motion", i)),
+        ...[...this.facialIdx.keys()].map((n) => this.holdFacial(n, false)),
+      ]);
+    } finally {
+      this.releaseAhead?.(); // every clip is parsed now
+      this.releaseAhead = undefined;
+    }
   }
 
   // Start a motion/facial with no fade-in: the model's first pose on Apper. A
@@ -248,7 +278,7 @@ export class CharacterModel {
     }
     let params: Array<[string, number]> = [];
     try {
-      const m = await fetchJson<any>(url);
+      const m = await aheadJson<any>(url);
       params = (m.Curves || [])
         .filter(
           (c: any) =>
@@ -265,6 +295,7 @@ export class CharacterModel {
   }
 
   destroy() {
+    this.releaseAhead?.();
     (this.display as any).destroy();
   }
 }

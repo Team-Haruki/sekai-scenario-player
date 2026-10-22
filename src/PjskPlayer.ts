@@ -11,7 +11,7 @@ import { Clock } from "./scenario/clock";
 import { DialogueBox } from "./scenario/dialogue";
 import { Effects } from "./scenario/effects";
 import { LABELS, Locale, MenuLabels, PlayerLabels } from "./scenario/labels";
-import { setCubismCoreUrl } from "./scenario/live2d";
+import { getLive2D, setCubismCoreUrl } from "./scenario/live2d";
 import { DEFAULT_MENU, type MenuItem, ScenarioMenu } from "./scenario/menu";
 import { FxManager } from "./scenario/particles";
 import { ScenarioPlayer } from "./scenario/player";
@@ -477,6 +477,8 @@ export class PjskPlayer {
     this.menu?.close();
     this.setUiHidden(false);
     this.showLoading();
+    this.audio.arm();
+    void getLive2D().catch(() => {}); // the Live2D runtime loads alongside the scenario (a failure surfaces on the first model)
 
     let scn: ScenarioSceneData;
     let manifest: ModelManifest;
@@ -592,6 +594,7 @@ export class PjskPlayer {
     this.leavePseudoFullscreen();
     if (document.fullscreenElement === this.root) void document.exitFullscreen().catch(() => {});
     this.listeners.clear();
+    this.audio.destroy();
     this.app.destroy(false, { children: true });
     this.root.remove();
   }

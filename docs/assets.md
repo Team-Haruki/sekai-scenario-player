@@ -111,10 +111,10 @@ In development, `npm run dev` mounts the same handler at `/assets/`. The git-ign
 When assets are served from another origin than the page, the server must send `Access-Control-Allow-Origin`:
 
 - model textures are uploaded as WebGL textures;
-- voices are routed through a Web Audio analyser for lip-sync;
+- voices and SEs are fetched and decoded for Web Audio (lip-sync reads the voice's waveform);
 - fonts require CORS by the CSS specification.
 
-Without it, models and fonts fail to load and mouths don't move.
+Without it, models, voices, SEs and fonts fail to load.
 
 ## Copyright
 
