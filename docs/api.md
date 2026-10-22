@@ -10,6 +10,12 @@ It isn't published to npm. Install it from GitHub; `dist/lib` is built on instal
 npm i github:Team-Haruki/sekai-scenario-player pixi.js@^7.4
 ```
 
+Each release also attaches a built tarball, for package managers that don't run a git dependency's build (Bun, for one):
+
+```bash
+npm i https://github.com/Team-Haruki/sekai-scenario-player/releases/download/v0.2.0/pjsk-scenario-player-0.2.0.tgz
+```
+
 The installed package is named `pjsk-scenario-player`, which is what the imports below use. `pixi.js` v7 is a peer dependency, shared with your app. You can also clone the repository, run `npm run build:lib` and copy `dist/lib/` into your project.
 
 ## Minimal example
