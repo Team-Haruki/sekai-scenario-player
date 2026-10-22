@@ -685,7 +685,7 @@ export class ScenarioPlayer {
           l.FacialName,
         );
       case LayoutType.Hide:
-        return this.stage.hide(l.Character2dId);
+        return this.stage.hide(l.Character2dId, l.SideFrom, l.SideFromOffsetX, l.SideTo, l.SideToOffsetX, ms);
       case LayoutType.Move:
         return this.stage.move(l.Character2dId, l.SideTo, l.SideToOffsetX, ms);
       case LayoutType.ShakeX:
