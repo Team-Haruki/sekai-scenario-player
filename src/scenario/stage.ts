@@ -156,6 +156,7 @@ export class Stage {
               return null;
             }
             this.setOpacity(cm, 0);
+            this.warmUp(cm);
             this.modelCache.set(costume, cm);
             return cm;
           },
@@ -493,32 +494,45 @@ export class Stage {
     for (const sc of this.chars.values()) this.fitModel(sc.cm.display as any, sc.side, 0);
   }
 
+  // The first frame that draws a model uploads its textures and compiles its
+  // shaders, ~0.8 s on a cold GPU: drawn then, an Apper's 0.1 s fade stalls.
+  // Draw each model once off-screen, through its fade filter, as it loads.
+  private warmUp(cm: CharacterModel) {
+    const d = cm.display as any;
+    const { filters, renderable } = d;
+    const rt = PIXI.RenderTexture.create({ width: 64, height: 64 });
+    try {
+      d.filters = [this.fadeFilter(cm)];
+      d.renderable = true;
+      this.app.renderer.render(d, { renderTexture: rt, clear: true });
+    } catch {
+      /* the stage draws it later anyway */
+    } finally {
+      d.filters = filters;
+      d.renderable = renderable;
+      rt.destroy(true);
+    }
+  }
+
   private addModel(cm: CharacterModel) {
     this.charLayer.addChild(cm.display as any);
     this.refreshFilters(cm);
   }
 
   // Layout timings (ScenarioPlayer.SnippetActionCharacterLayout, 7.0.0):
-  // - Apper: AppearCharacter fades the model in over 0.1 s and finishes the
-  //   snippet through CharacterMoveTo(…, 0.2 s); a slide to SideTo runs on
-  //   without gating.
+  // - Apper: AppearCharacter fades the model in over 0.1 s and the snippet
+  //   finishes with the fade (a game trace: ~0.134 s from dispatch, counting the
+  //   frame before the action starts); a slide to SideTo runs on without gating.
   // - Hide: HideCharacter fades out over 0.1 s after a delay of
   //   timeMultiplierInSkipMode (0.5, set in the ctor and applied here outside
   //   skip mode too) × 0.15 s, or, sliding out to SideTo, 0.5 × move − 0.1 s.
   private static readonly FADE_MS = 100;
-  private static readonly APPEAR_MS = 200;
   private static readonly HIDE_DELAY_MS = 75;
 
   // Apper(2): ensure model for costume, place at side, play motion/facial, fade in.
   // Empty costume (70% of Appers in real scenarios) = re-show the character's
   // existing model. Models are kept alive across Hide so this works.
   async appear(char2dId: number, costume: string, side: number, offsetX: number, motion: string, facial: string) {
-    const gate = this.clock.sleep(Stage.APPEAR_MS);
-    await this.appearModel(char2dId, costume, side, offsetX, motion, facial);
-    await gate;
-  }
-
-  private async appearModel(char2dId: number, costume: string, side: number, offsetX: number, motion: string, facial: string) {
     const sc = this.chars.get(char2dId);
     if (!costume || (sc && sc.costume === costume)) {
       if (!sc) return; // empty costume but never appeared — nothing to show
@@ -553,7 +567,6 @@ export class Stage {
     motion: string,
     facial: string,
   ) {
-    const gate = this.clock.sleep(Stage.APPEAR_MS);
     let sc = this.chars.get(char2dId);
     if (!costume) {
       if (!sc) return; // empty costume = re-show the existing model; none yet
@@ -581,7 +594,6 @@ export class Stage {
     // the slide runs on after the Apper finishes
     void this.clock.tween(ms, this.placeX(sideFrom, offFrom), this.placeX(sideTo, offTo), (v) => (d.position.x = v));
     await this.fadeTo(sc.cm, 1);
-    await gate;
   }
 
   private async showExisting(sc: StageChar, side: number, offsetX: number, motion: string, facial: string) {
@@ -653,6 +665,13 @@ export class Stage {
   // Apply motion/facial to an already-present character (CharacterMotion / Talk).
   applyMotionFacial(char2dId: number, motion: string, facial: string) {
     this.chars.get(char2dId)?.cm.play(motion, facial);
+  }
+
+  // Some shown character's body motion is still playing
+  // (ScenarioPlayer.CheckAutoModeTalkNext).
+  motionsBusy(): boolean {
+    for (const sc of this.chars.values()) if (sc.cm.opacity > 0 && sc.cm.motionBusy()) return true;
+    return false;
   }
 
   // Lip-sync: set a character's mouth target (smoothed onto ParamMouthOpenY),

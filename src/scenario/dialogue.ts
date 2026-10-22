@@ -11,7 +11,6 @@ export class DialogueBox {
   private noteEl: HTMLElement;
   private typing = false;
   private skip = false;
-  private opened = false; // window-open fade plays once
 
   constructor(
     parent: HTMLElement,
@@ -64,6 +63,7 @@ export class DialogueBox {
   // the full body is shown. Click during typing fast-forwards (skipTyping()).
   // `instant` (早送り) shows the whole body at once.
   async show(name: string, body: string, instant = false): Promise<void> {
+    const closed = this.root.classList.contains("hidden");
     this.root.classList.remove("hidden");
     this.setText(this.nameEl, name);
     this.root.classList.toggle("no-name", !name); // narration: no name, no bar
@@ -71,10 +71,9 @@ export class DialogueBox {
     this.typing = true;
     this.skip = false;
     this.noteEl.classList.remove("show"); // hide indicator while typing
-    if (!this.opened) {
-      this.opened = true;
-      await this.clock.sleep(200); // 0.2s window-open fade
-    }
+    // typing waits out the 0.2s window-open fade each time the window reopens
+    // (the first line, and the one after a WhenFinishCloseWindow line)
+    if (closed) await this.clock.sleep(200);
     if (instant) this.skip = true;
     const delay = 60; // 0.06s per character
     for (let i = 0; i < body.length; i++) {

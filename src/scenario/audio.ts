@@ -223,10 +223,10 @@ export class AudioManager {
       .catch(() => null));
   }
 
-  /** Fetch and decode a clip that plays soon (the next lines' voices and SEs). */
-  preload(urls: string[]) {
+  /** Fetch and decode a clip that plays soon (the next lines' voices and SEs); resolves once it is ready or failed. */
+  async preload(urls: string[]): Promise<void> {
     const c = this.clip(urls);
-    if (c) void this.decoded(c);
+    if (c) await this.decoded(c);
   }
 
   // Current voice amplitude (RMS, ~0-1) for lip-sync; 0 if no voice playing.
