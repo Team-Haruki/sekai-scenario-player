@@ -5,7 +5,7 @@ import {
   EyeOff,
   FastForward,
   Maximize,
-  Minimize,
+  Volume2,
   FileBraces,
   Moon,
   PanelLeft,
@@ -49,6 +49,7 @@ const progress = ref(-1);
 const total = ref(0);
 const state = ref<"idle" | "loading" | "playing" | "ended" | "error">("idle");
 const auto = ref(true);
+const voice = useStorage("pjsk:voice", true);
 const fast = ref(false);
 
 const base = computed(() => settings.value.assets);
@@ -84,6 +85,7 @@ function mount() {
     fonts: { name: fontBold, body: fontMedium },
     autoplay: settings.value.autoplay ? "auto" : false,
     auto: auto.value,
+    voice: voice.value,
   });
   p.on("load", (e) => {
     scenario.value = e.scenario;
@@ -98,7 +100,11 @@ function mount() {
     state.value = "error";
     toast.error("剧情加载失败", { description: e.error.message });
   });
-  p.on("mode", (m) => ((auto.value = m.auto), (fast.value = m.fast)));
+  p.on("mode", (m) => {
+    auto.value = m.auto;
+    fast.value = m.fast;
+    voice.value = m.voice;
+  });
   p.on("log", () => (wide.value ? (showLog.value = !showLog.value) : toast.info("台词在播放器下方的「台词」页")));
   p.setLogActive(showLog.value);
   player = p;
@@ -208,46 +214,12 @@ function onDragOver(e: DragEvent) {
   dragging.value = true;
 }
 
-// fullscreen: the element API where there is one (and landscape on phones
-// that allow locking it), otherwise a fixed overlay (iPhone Safari)
-const stageBox = ref<HTMLElement>();
-const fullscreen = ref(false);
-async function toggleFullscreen() {
-  if (fullscreen.value) {
-    fullscreen.value = false;
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
-    return;
-  }
-  fullscreen.value = true;
-  if (!stageBox.value?.requestFullscreen) return;
-  try {
-    await stageBox.value.requestFullscreen({ navigationUI: "hide" });
-    // left (exit button / Escape) while the request was pending: undo it
-    if (!fullscreen.value) return void (await document.exitFullscreen().catch(() => {}));
-    await (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.("landscape");
-  } catch {
-    /* overlay only */
-  }
-}
-const onFullscreenChange = () => {
-  if (!document.fullscreenElement) fullscreen.value = false;
-};
-const onKey = (e: KeyboardEvent) => {
-  if (e.key === "Escape" && fullscreen.value && !document.fullscreenElement) fullscreen.value = false;
-};
-onMounted(() => {
-  document.addEventListener("fullscreenchange", onFullscreenChange);
-  addEventListener("keydown", onKey);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener("fullscreenchange", onFullscreenChange);
-  removeEventListener("keydown", onKey);
-});
-
 const jump = (i: number) => player?.jumpTo(i);
 const setAuto = (on: boolean) => player?.setAuto(on);
 const setFast = (on: boolean) => player?.setFast(on);
 const hideUi = () => player?.setUiHidden(true);
+const setVoice = (on: boolean) => player?.setVoice(on);
+const toggleFullscreen = () => player?.toggleFullscreen();
 
 const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.value}`);
 </script>
@@ -324,29 +296,8 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
           class="flex shrink-0 flex-col items-center gap-2 p-3 sm:p-4 lg:min-h-0 lg:justify-center lg:gap-3 lg:p-6"
           aria-label="播放器"
         >
-          <div
-            ref="stageBox"
-            :class="cn('relative', fullscreen ? 'fixed inset-0 z-50 grid place-items-center bg-black' : 'stage-width')"
-          >
-            <div
-              ref="host"
-              :class="
-                cn(
-                  'overflow-hidden bg-stage',
-                  fullscreen ? 'w-[min(100vw,calc(100dvh*16/9))]' : 'rounded-xl shadow-[0_12px_40px_-12px_rgba(0,0,34,.45)] ring-1 ring-black/5',
-                )
-              "
-            />
-            <Button
-              v-if="fullscreen"
-              variant="secondary"
-              size="icon-sm"
-              class="absolute top-3 left-3 opacity-80"
-              aria-label="退出全屏"
-              @click="toggleFullscreen"
-            >
-              <Minimize />
-            </Button>
+          <div class="stage-width">
+            <div ref="host" class="overflow-hidden rounded-xl bg-stage shadow-[0_12px_40px_-12px_rgba(0,0,34,.45)] ring-1 ring-black/5" />
           </div>
           <div class="stage-width flex flex-wrap items-center gap-x-1 gap-y-1 sm:gap-2">
             <Tooltip v-if="wide">
@@ -357,6 +308,7 @@ const lineCount = computed(() => `${Math.max(0, progress.value + 1)} / ${total.v
             </Tooltip>
             <Toggle :model-value="auto" size="sm" aria-label="自动播放" @update:model-value="setAuto"><Play />自动</Toggle>
             <Toggle :model-value="fast" size="sm" aria-label="快进" @update:model-value="setFast"><FastForward />快进</Toggle>
+            <Toggle :model-value="voice" size="sm" aria-label="语音" @update:model-value="setVoice"><Volume2 />语音</Toggle>
             <Button variant="ghost" size="sm" @click="hideUi"><EyeOff />隐藏界面</Button>
             <Button variant="ghost" size="sm" :disabled="!source" @click="restart"><RotateCcw />重播</Button>
             <Button variant="ghost" size="sm" @click="toggleFullscreen"><Maximize />全屏</Button>

@@ -1,7 +1,9 @@
 // pjsk-scenario-player — public API.
 
 export { DEFAULT_FONTS, PjskPlayer } from "./PjskPlayer";
-export type { PlayerEvents, PlayerOptions } from "./PjskPlayer";
+export type { PlayerEvents, PlayerModes, PlayerOptions, TextScript } from "./PjskPlayer";
+export { DEFAULT_MENU, GAME_MENU } from "./scenario/menu";
+export type { MenuItem } from "./scenario/menu";
 export { createAssetResolver } from "./scenario/resolver";
 export type { AssetResolver, AssetUrls, LoadContext, ModelManifest, ModelManifestEntry } from "./scenario/resolver";
 export { scriptLines } from "./scenario/script";

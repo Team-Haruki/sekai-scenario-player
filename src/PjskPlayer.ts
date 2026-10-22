@@ -12,7 +12,7 @@ import { DialogueBox } from "./scenario/dialogue";
 import { Effects } from "./scenario/effects";
 import { LABELS, Locale, MenuLabels, PlayerLabels } from "./scenario/labels";
 import { setCubismCoreUrl } from "./scenario/live2d";
-import { ScenarioMenu } from "./scenario/menu";
+import { DEFAULT_MENU, type MenuItem, ScenarioMenu } from "./scenario/menu";
 import { FxManager } from "./scenario/particles";
 import { ScenarioPlayer } from "./scenario/player";
 import { AssetResolver, ModelManifest, bindAssets, createAssetResolver } from "./scenario/resolver";
@@ -36,8 +36,18 @@ export interface PlayerOptions {
   /** Language of the start overlay and story menu. Default "zh". */
   locale?: Locale;
   labels?: { start?: string; loading?: string; menu?: Partial<MenuLabels> };
-  /** Show the ⋯ story menu. Default true. */
-  menu?: boolean;
+  /**
+   * The ⋯ story menu: `false` hides it, a list picks its buttons (GAME_MENU is
+   * the game's own panel). Default DEFAULT_MENU: fullscreen, auto, mute, fast,
+   * hide, log.
+   */
+  menu?: boolean | readonly MenuItem[];
+  /** Start muted. Default false. */
+  muted?: boolean;
+  /** Play the voices. Default true. */
+  voice?: boolean;
+  /** Script of the text being shown, for its fonts (see setTextScript). Default "ja". */
+  textScript?: TextScript;
   /**
    * Talk window fonts: `name` (name plate, bold) and `body` (lines, medium)
    * URLs. Default: Source Han Sans JP Bold / Medium from `assets.font()`
@@ -60,12 +70,24 @@ export interface PlayerEvents {
   /** The scenario played to its end. */
   end: { scenario: ScenarioSceneData };
   error: { error: Error };
-  /** auto / fast / UI-hidden changed (from the menu or the API). */
-  mode: { auto: boolean; fast: boolean; uiHidden: boolean };
+  /** A mode changed (from the menu, a tap or the API). */
+  mode: PlayerModes;
   /** The menu's Log (ログ) button was pressed. */
   log: Record<string, never>;
 }
 type Listener<K extends keyof PlayerEvents> = (e: PlayerEvents[K]) => void;
+
+export interface PlayerModes {
+  auto: boolean;
+  fast: boolean;
+  uiHidden: boolean;
+  muted: boolean;
+  voice: boolean;
+  fullscreen: boolean;
+}
+
+/** Which family set the talk window uses: Japanese / Latin, Chinese or Korean text. */
+export type TextScript = "ja" | "latin" | "zh" | "ko";
 
 interface Session {
   scenario: ScenarioSceneData;
@@ -127,7 +149,7 @@ export class PjskPlayer {
   private manifest?: Promise<ModelManifest>;
   private labels: PlayerLabels;
   private listeners = new Map<keyof PlayerEvents, Set<Listener<any>>>();
-  private modes: { auto: boolean; fast: boolean; uiHidden: boolean };
+  private modes: PlayerModes;
   private logOn = false;
   private resize: ResizeObserver;
   private loadSeq = 0;
@@ -145,7 +167,15 @@ export class PjskPlayer {
       loading: options.labels?.loading ?? base.loading,
       menu: { ...base.menu, ...options.labels?.menu },
     };
-    this.modes = { auto: options.auto ?? true, fast: false, uiHidden: false };
+    this.modes = {
+      auto: options.auto ?? true,
+      fast: false,
+      uiHidden: false,
+      muted: options.muted ?? false,
+      voice: options.voice ?? true,
+      fullscreen: false,
+    };
+    this.audio.setMuted(this.modes.muted);
 
     injectStyle("pjsk-player-style", css);
     if (options.fonts !== false) {
@@ -158,6 +188,7 @@ export class PjskPlayer {
 
     this.root = document.createElement("div");
     this.root.className = "pjsk-player";
+    this.root.dataset.script = options.textScript ?? "ja";
     const sprites = new UiSprites(this.assets.ui);
     for (const p of CSS_IMAGES)
       sprites.bind(`${p}.png`, (url) => this.root.style.setProperty(`--pjsk-img-${p.replace(/[/_]/g, "-")}`, `url("${url}")`));
@@ -186,13 +217,16 @@ export class PjskPlayer {
       this.menu = new ScenarioMenu(
         this.stageEl,
         {
-          onAuto: () => this.setAuto(!this.modes.auto),
-          onFast: () => this.setFast(!this.modes.fast),
-          onHideUi: () => this.setUiHidden(true),
-          onLog: () => this.emit("log", {}),
+          auto: () => this.setAuto(!this.modes.auto),
+          fast: () => this.setFast(!this.modes.fast),
+          mute: () => this.setMuted(!this.modes.muted),
+          fullscreen: () => void this.toggleFullscreen(),
+          hide: () => this.setUiHidden(true),
+          log: () => this.emit("log", {}),
         },
         sprites,
         this.labels.menu,
+        Array.isArray(options.menu) ? options.menu : DEFAULT_MENU,
       );
 
     this.overlay = document.createElement("div");
@@ -216,6 +250,8 @@ export class PjskPlayer {
       else this.session?.player.onClick();
     });
 
+    document.addEventListener("fullscreenchange", this.onFullscreenChange);
+    addEventListener("keydown", this.onKey);
     this.resize = new ResizeObserver(() => this.fit());
     this.resize.observe(this.root);
     this.fit();
@@ -276,9 +312,124 @@ export class PjskPlayer {
     this.logOn = on;
     this.syncModes();
   }
+  get muted() {
+    return this.modes.muted;
+  }
+  /** Silence BGM, SE and voices (lip-sync keeps following the voice). */
+  setMuted(on: boolean) {
+    this.modes.muted = on;
+    this.audio.setMuted(on);
+    this.syncModes();
+  }
+  get voice() {
+    return this.modes.voice;
+  }
+  /** Play the voices; off, lines advance on the no-voice timing. Takes effect from the next line. */
+  setVoice(on: boolean) {
+    this.modes.voice = on;
+    if (this.session) this.session.player.voiceEnabled = on;
+    if (!on) this.audio.stopVoice();
+    this.syncModes();
+  }
+
+  get fullscreen() {
+    return this.modes.fullscreen;
+  }
+  /**
+   * Fullscreen on the player (locked to landscape where the browser allows).
+   * Where pages can't go fullscreen (iPhone Safari) the player covers the
+   * viewport instead, turned sideways while the phone is held upright.
+   */
+  async setFullscreen(on: boolean) {
+    this.fsWanted = on;
+    if (!on) {
+      this.leavePseudoFullscreen();
+      if (document.fullscreenElement === this.root) await document.exitFullscreen().catch(() => {});
+    } else if (!this.modes.fullscreen) {
+      if (document.fullscreenEnabled && this.root.requestFullscreen) {
+        try {
+          await this.root.requestFullscreen({ navigationUI: "hide" });
+          // left again while the request was pending: undo it
+          if (!this.fsWanted) await document.exitFullscreen().catch(() => {});
+          else await (screen.orientation as { lock?: (o: string) => Promise<void> } | undefined)?.lock?.("landscape").catch(() => {});
+        } catch {
+          if (this.fsWanted && !this.destroyed) this.enterPseudoFullscreen();
+        }
+      } else this.enterPseudoFullscreen();
+    }
+    this.onFullscreenChange();
+  }
+  toggleFullscreen() {
+    return this.setFullscreen(!this.fsWanted);
+  }
+  private enterPseudoFullscreen() {
+    this.root.classList.add("pjsk-pseudo-fs");
+    document.documentElement.classList.add("pjsk-fs-lock");
+  }
+  private leavePseudoFullscreen() {
+    this.root.classList.remove("pjsk-pseudo-fs");
+    document.documentElement.classList.remove("pjsk-fs-lock");
+  }
+  private fsWanted = false;
+  // the overlay fallback has no browser UI to leave it: Escape does
+  private readonly onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && this.root.classList.contains("pjsk-pseudo-fs")) void this.setFullscreen(false);
+  };
+  private readonly onFullscreenChange = () => {
+    const on = document.fullscreenElement === this.root || this.root.classList.contains("pjsk-pseudo-fs");
+    if (!on) this.fsWanted = false; // left with the browser's own controls
+    if (on === this.modes.fullscreen) return;
+    this.modes.fullscreen = on;
+    this.syncModes();
+  };
+
+  /**
+   * The script of the text being shown: Chinese and Korean lines switch to the
+   * --pjsk-font-zh-* / --pjsk-font-ko-* families (bold names, medium lines).
+   */
+  setTextScript(script: TextScript) {
+    this.root.dataset.script = script;
+  }
+
+  /** Change the start overlay and menu text. */
+  setLabels(labels: { start?: string; loading?: string; menu?: Partial<MenuLabels> }) {
+    this.labels = {
+      start: labels.start ?? this.labels.start,
+      loading: labels.loading ?? this.labels.loading,
+      menu: { ...this.labels.menu, ...labels.menu },
+    };
+    this.loadingEl.textContent = this.labels.loading;
+    this.startBtn.textContent = this.labels.start;
+    this.menu?.setLabels(this.labels.menu);
+  }
+
+  /** Show the loading spinner over the stage (e.g. while the host prepares a scenario). */
+  showLoading() {
+    this.overlay.hidden = false;
+    this.loadingEl.hidden = false;
+    this.statusEl.textContent = "";
+    this.startBtn.hidden = true;
+  }
+  /** Show a message over the stage instead of the scenario (an error, a prompt). */
+  showMessage(text: string) {
+    this.overlay.hidden = false;
+    this.loadingEl.hidden = true;
+    this.startBtn.hidden = true;
+    this.statusEl.textContent = text;
+  }
+  hideOverlay() {
+    this.overlay.hidden = true;
+  }
+
   private syncModes() {
     this.dialogue.setAuto(this.modes.fast ? "skip" : this.modes.auto ? "auto" : "off");
-    this.menu?.setState({ auto: this.modes.auto, fast: this.modes.fast, log: this.logOn });
+    this.menu?.setState({
+      auto: this.modes.auto,
+      fast: this.modes.fast,
+      log: this.logOn,
+      mute: this.modes.muted,
+      fullscreen: this.modes.fullscreen,
+    });
     this.stageEl.classList.toggle("ui-hidden", this.modes.uiHidden);
     this.emit("mode", { ...this.modes });
   }
@@ -343,6 +494,7 @@ export class PjskPlayer {
       for (const id of holos) holo(id);
     };
     player.auto = this.modes.auto;
+    player.voiceEnabled = this.modes.voice;
     player.setFast(this.modes.fast);
     player.onProgress = (index, total) => this.emit("progress", { index, total });
     player.onReady = () => {
@@ -405,6 +557,11 @@ export class PjskPlayer {
     this.destroyed = true;
     this.stop();
     this.resize.disconnect();
+    document.removeEventListener("fullscreenchange", this.onFullscreenChange);
+    removeEventListener("keydown", this.onKey);
+    this.fsWanted = false; // a request still pending must not fall back to the overlay
+    this.leavePseudoFullscreen();
+    if (document.fullscreenElement === this.root) void document.exitFullscreen().catch(() => {});
     this.listeners.clear();
     this.app.destroy(false, { children: true });
     this.root.remove();
@@ -432,18 +589,9 @@ export class PjskPlayer {
     this.app.stage.removeChildren();
   }
 
-  private showLoading() {
-    this.overlay.hidden = false;
-    this.loadingEl.hidden = false;
-    this.statusEl.textContent = "";
-    this.startBtn.hidden = true;
-  }
   private fail(e: Error) {
     console.error(e);
-    this.overlay.hidden = false;
-    this.loadingEl.hidden = true;
-    this.startBtn.hidden = true;
-    this.statusEl.textContent = "❌ " + e.message;
+    this.showMessage("❌ " + e.message);
     this.emit("error", { error: e });
   }
 

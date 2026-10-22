@@ -3,13 +3,16 @@
    reference canvas x 2/3) that the player scales to fit its host element, so
    all px values below are stage px. Injected once per document by the player. */
 
-.pjsk-player {
+/* defaults a host can override from any stylesheet (zero specificity) */
+:where(.pjsk-player) {
   /* the game's FOT-RodinNTLG Pro EB (names) / DB (lines); Source Han Sans Bold / Medium by default */
   --pjsk-font-name: "PJSK Sans Bold", "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif;
   --pjsk-font-body: "PJSK Sans Medium", "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif;
   /* Chinese UI labels: Rodin has no simplified hanzi, so use one CN bold face throughout */
   --pjsk-cjk-bold: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC",
     "Source Han Sans SC", sans-serif;
+}
+.pjsk-player {
   position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #000;
   user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
 }
@@ -100,15 +103,15 @@
    rgba(68,68,102,.4) down to 72 below the last row (796 ref tall). Buttons
    btn_round_r16 (9-slice, 8px soft shadow inside the rect), labels RodinNTLG
    EB 32 rgb(68,68,102) (しおり rgb(85,85,119)); on = rgb(255,119,170). */
-.pjsk-menu-panel { position: absolute; right: 0; top: 0; width: 261.33px; height: 525.33px; z-index: 8; overflow: hidden;
+.pjsk-menu-panel { position: absolute; right: 0; top: 0; width: 261.33px; height: var(--pjsk-menu-h, 525.33px); z-index: 8; overflow: hidden;
   background: rgba(68,68,102,.4); border-bottom-left-radius: 20px; cursor: default; }
 /* Open/Close clips: SizeDelta.y 0↔788 and Content alpha 0↔1 over 0.167s, flat tangents (smoothstep) */
 .pjsk-menu-panel.opening { animation: pjsk-smp-grow .167s cubic-bezier(.333,0,.667,1) both; }
 .pjsk-menu-panel.closing { animation: pjsk-smp-shrink .167s cubic-bezier(.333,0,.667,1) both; }
 .pjsk-menu-panel.opening > * { animation: pjsk-smp-fade-in .167s cubic-bezier(.333,0,.667,1) both; }
 .pjsk-menu-panel.closing > * { animation: pjsk-smp-fade-out .167s cubic-bezier(.333,0,.667,1) both; }
-@keyframes pjsk-smp-grow { from { height: 0; } to { height: 525.33px; } }
-@keyframes pjsk-smp-shrink { from { height: 525.33px; } to { height: 0; } }
+@keyframes pjsk-smp-grow { from { height: 0; } to { height: var(--pjsk-menu-h, 525.33px); } }
+@keyframes pjsk-smp-shrink { from { height: var(--pjsk-menu-h, 525.33px); } to { height: 0; } }
 @keyframes pjsk-smp-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pjsk-smp-fade-out { from { opacity: 1; } to { opacity: 0; } }
 .pjsk-smp-close { position: absolute; left: 219.93px; top: 12.33px; width: 29.33px; height: 29.33px; cursor: pointer;
@@ -116,7 +119,7 @@
 .pjsk-smp-line { position: absolute; left: 42.67px; top: 117.2px; width: 176px; height: 2.67px; background: rgb(235,235,242); }
 .pjsk-smp-btn { position: absolute; left: 37.33px; width: 186.67px; height: 64px; cursor: pointer; color: rgb(68,68,102);
   border-image: var(--pjsk-img-menu-btn) 27 fill / 18px stretch; }
-.pjsk-smp-btn.small { top: 408px; width: 90.67px; height: 74.67px; }
+.pjsk-smp-btn.small { width: 90.67px; height: 74.67px; }
 .pjsk-smp-btn:active { filter: brightness(.92); }
 .pjsk-smp-btn[data-k="bookmark"] { color: rgb(85,85,119); }
 .pjsk-smp-btn.on { color: rgb(255,119,170); }
@@ -226,3 +229,28 @@
   animation: pjsk-spin .8s linear infinite; }
 @keyframes pjsk-spin { to { transform: rotate(360deg); } }
 .pjsk-overlay[hidden], .pjsk-start[hidden] { display: none; }
+
+/* Text in other scripts (setTextScript): Chinese and Korean lines use these
+   families (put host-registered faces first), with the clients' weights:
+   bold names, medium lines. Japanese / Latin keep --pjsk-font-name / -body. */
+:where(.pjsk-player) {
+  --pjsk-font-zh-name: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  --pjsk-font-zh-body: var(--pjsk-font-zh-name);
+  --pjsk-font-ko-name: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Source Han Sans K", sans-serif;
+  --pjsk-font-ko-body: var(--pjsk-font-ko-name);
+}
+.pjsk-player[data-script="zh"] .pjsk-dlg-name { font-family: var(--pjsk-font-zh-name); font-weight: 700; }
+.pjsk-player[data-script="zh"] :is(.pjsk-dlg-body, .pjsk-fx-telop-text, .pjsk-fx-place-text, .pjsk-fst-text, .pjsk-fx-choice-btn) {
+  font-family: var(--pjsk-font-zh-body); font-weight: 500; }
+.pjsk-player[data-script="ko"] .pjsk-dlg-name { font-family: var(--pjsk-font-ko-name); font-weight: 700; }
+.pjsk-player[data-script="ko"] :is(.pjsk-dlg-body, .pjsk-fx-telop-text, .pjsk-fx-place-text, .pjsk-fst-text, .pjsk-fx-choice-btn) {
+  font-family: var(--pjsk-font-ko-body); font-weight: 500; }
+
+/* Fullscreen: native on the player, or (iPhone Safari, no element fullscreen)
+   an overlay over the viewport, laid sideways while the phone is held upright. */
+.pjsk-player:fullscreen, .pjsk-player.pjsk-pseudo-fs { aspect-ratio: auto; width: 100vw; height: 100vh; background: #000; }
+.pjsk-player.pjsk-pseudo-fs { position: fixed; left: 0; top: 0; height: 100dvh; z-index: 2147483000; }
+@media (orientation: portrait) {
+  .pjsk-player.pjsk-pseudo-fs { width: 100dvh; height: 100vw; transform-origin: 0 0; transform: translateX(100vw) rotate(90deg); }
+}
+:root.pjsk-fs-lock, :root.pjsk-fs-lock body { overflow: hidden; }
