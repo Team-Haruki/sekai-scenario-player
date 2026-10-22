@@ -534,10 +534,12 @@ class Emitter {
     return [0, 1, 2].map((j) => (r[j] * w[0] + r[4 + j] * w[1] + r[8 + j] * w[2]) / (this.scale[j] || 1));
   }
 
+  // cycleCount 0 repeats the burst every repeatInterval for as long as the
+  // system emits (Unity: "0 means infinitely")
   private burst(b: Json, i: number, prev: number, now: number) {
-    const cycles = b.cycleCount || 1;
+    const cycles = b.cycleCount ?? 1;
     const done = this.burstDone[i] ?? 0;
-    if (done >= cycles && cycles > 0) return;
+    if (cycles > 0 && done >= cycles) return;
     const at = b.time + done * (b.repeatInterval || 0.01);
     if (now >= at && (prev < at || prev > now || done === 0)) {
       this.burstDone[i] = done + 1;
@@ -565,7 +567,8 @@ class Emitter {
     }
     (e.m_Bursts || []).forEach((b: Json, i: number) => {
       const done = s.bursts[i] ?? 0;
-      if (done >= (b.cycleCount || 1)) return;
+      const cycles = b.cycleCount ?? 1; // 0: endless, as above
+      if (cycles > 0 && done >= cycles) return;
       const t = b.time + done * (b.repeatInterval || 0.01);
       if (s.t >= t && prev <= t) {
         s.bursts[i] = done + 1;
