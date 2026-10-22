@@ -1,0 +1,36 @@
+name: Playback bug
+description: A scenario plays differently from the game, or fails to play
+labels: [bug]
+body:
+  - type: input
+    id: scenario
+    attributes:
+      label: Scenario ID (ScenarioId)
+      placeholder: event_107_01
+    validations:
+      required: true
+  - type: input
+    id: snippet
+    attributes:
+      label: Where it happens
+      description: The line of dialogue, or the snippet counter shown under the stage.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you see, and what the game does
+      description: What the player shows and what the game shows instead. An in-game screenshot or recording helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Browser console output
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Browser and OS
+      placeholder: Chrome 141 / macOS 15
+  - type: markdown
+    attributes:
+      value: Please don't attach game asset files (models, voices, full scenario JSON and so on) to issues.

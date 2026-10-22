@@ -1,0 +1,406 @@
+{
+ "ScenarioId": "sample_demo",
+ "AppearCharacters": [
+  {
+   "Character2dId": 10,
+   "CostumeType": "10an_normal"
+  },
+  {
+   "Character2dId": 20,
+   "CostumeType": "20mizuki_normal"
+  }
+ ],
+ "FirstLayout": [],
+ "FirstBgm": "",
+ "FirstBackground": "bg_a000301",
+ "FirstCharacterLayoutMode": 0,
+ "Snippets": [
+  {
+   "Index": 0,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 0,
+   "Delay": 0
+  },
+  {
+   "Index": 1,
+   "Action": 7,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 0,
+   "Delay": 0
+  },
+  {
+   "Index": 2,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 1,
+   "Delay": 0
+  },
+  {
+   "Index": 3,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 2,
+   "Delay": 0
+  },
+  {
+   "Index": 4,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 3,
+   "Delay": 0
+  },
+  {
+   "Index": 5,
+   "Action": 1,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 0,
+   "Delay": 0
+  },
+  {
+   "Index": 6,
+   "Action": 2,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 0,
+   "Delay": 0
+  },
+  {
+   "Index": 7,
+   "Action": 1,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 1,
+   "Delay": 0
+  },
+  {
+   "Index": 8,
+   "Action": 2,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 1,
+   "Delay": 0
+  },
+  {
+   "Index": 9,
+   "Action": 1,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 2,
+   "Delay": 0
+  },
+  {
+   "Index": 10,
+   "Action": 2,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 2,
+   "Delay": 0
+  },
+  {
+   "Index": 11,
+   "Action": 1,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 3,
+   "Delay": 0
+  },
+  {
+   "Index": 12,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 4,
+   "Delay": 0
+  },
+  {
+   "Index": 13,
+   "Action": 1,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 4,
+   "Delay": 0
+  },
+  {
+   "Index": 14,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 5,
+   "Delay": 0
+  },
+  {
+   "Index": 15,
+   "Action": 2,
+   "ProgressBehavior": 0,
+   "ReferenceIndex": 3,
+   "Delay": 0
+  },
+  {
+   "Index": 16,
+   "Action": 2,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 4,
+   "Delay": 0
+  },
+  {
+   "Index": 17,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 6,
+   "Delay": 0
+  },
+  {
+   "Index": 18,
+   "Action": 1,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 5,
+   "Delay": 0
+  },
+  {
+   "Index": 19,
+   "Action": 6,
+   "ProgressBehavior": 1,
+   "ReferenceIndex": 7,
+   "Delay": 0
+  }
+ ],
+ "TalkData": [
+  {
+   "TalkCharacters": [],
+   "WindowDisplayName": "",
+   "Body": "这是一段随仓库附带的示例剧情，演示对话框、字幕和转场。",
+   "LipSync": 0,
+   "MotionChangeFrom": 0,
+   "Motions": [],
+   "Voices": [],
+   "Speed": 0,
+   "FontSize": 0,
+   "WhenFinishCloseWindow": 0,
+   "TargetValueScale": 0
+  },
+  {
+   "TalkCharacters": [
+    {
+     "Character2dId": 10
+    }
+   ],
+   "WindowDisplayName": "杏",
+   "Body": "连上素材源以后，角色、背景和 BGM 都会按游戏的时间线播放。",
+   "LipSync": 0,
+   "MotionChangeFrom": 0,
+   "Motions": [
+    {
+     "Character2dId": 10,
+     "MotionName": "w-cute-nod04",
+     "FacialName": "face_smile_05",
+     "TimingSyncValue": 0
+    }
+   ],
+   "Voices": [],
+   "Speed": 0,
+   "FontSize": 0,
+   "WhenFinishCloseWindow": 0,
+   "TargetValueScale": 0
+  },
+  {
+   "TalkCharacters": [
+    {
+     "Character2dId": 20
+    }
+   ],
+   "WindowDisplayName": "瑞希",
+   "Body": "没有素材的话，就只剩下文字了——不过引擎本身照样会跑。",
+   "LipSync": 0,
+   "MotionChangeFrom": 0,
+   "Motions": [],
+   "Voices": [],
+   "Speed": 0,
+   "FontSize": 0,
+   "WhenFinishCloseWindow": 0,
+   "TargetValueScale": 0
+  },
+  {
+   "TalkCharacters": [
+    {
+     "Character2dId": 10
+    }
+   ],
+   "WindowDisplayName": "杏",
+   "Body": "点画面推进对话，右上角菜单里可以切换自动和快进。",
+   "LipSync": 0,
+   "MotionChangeFrom": 0,
+   "Motions": [
+    {
+     "Character2dId": 10,
+     "MotionName": "w-adult-think01",
+     "FacialName": "face_smile_04",
+     "TimingSyncValue": 0
+    }
+   ],
+   "Voices": [],
+   "Speed": 0,
+   "FontSize": 0,
+   "WhenFinishCloseWindow": 0,
+   "TargetValueScale": 0
+  },
+  {
+   "TalkCharacters": [
+    {
+     "Character2dId": 20
+    }
+   ],
+   "WindowDisplayName": "瑞希",
+   "Body": "右边的台词列表可以直接点击跳转。",
+   "LipSync": 0,
+   "MotionChangeFrom": 0,
+   "Motions": [],
+   "Voices": [],
+   "Speed": 0,
+   "FontSize": 0,
+   "WhenFinishCloseWindow": 0,
+   "TargetValueScale": 0
+  },
+  {
+   "TalkCharacters": [],
+   "WindowDisplayName": "",
+   "Body": "示例到此结束。在左侧挑一集真正的剧情吧。",
+   "LipSync": 0,
+   "MotionChangeFrom": 0,
+   "Motions": [],
+   "Voices": [],
+   "Speed": 0,
+   "FontSize": 0,
+   "WhenFinishCloseWindow": 0,
+   "TargetValueScale": 0
+  }
+ ],
+ "LayoutData": [
+  {
+   "Type": 2,
+   "SideFrom": 3,
+   "SideFromOffsetX": 0,
+   "SideTo": 3,
+   "SideToOffsetX": 0,
+   "DepthType": 0,
+   "Character2dId": 10,
+   "CostumeType": "10an_normal",
+   "MotionName": "w-cool-tilthead01",
+   "FacialName": "face_smile_05",
+   "MoveSpeedType": 0
+  },
+  {
+   "Type": 2,
+   "SideFrom": 6,
+   "SideFromOffsetX": 0,
+   "SideTo": 5,
+   "SideToOffsetX": 0,
+   "DepthType": 0,
+   "Character2dId": 20,
+   "CostumeType": "20mizuki_normal",
+   "MotionName": "w-adult-think01",
+   "FacialName": "face_smile_01",
+   "MoveSpeedType": 0
+  },
+  {
+   "Type": 4,
+   "SideFrom": 4,
+   "SideFromOffsetX": 0,
+   "SideTo": 4,
+   "SideToOffsetX": 0,
+   "DepthType": 0,
+   "Character2dId": 10,
+   "CostumeType": "",
+   "MotionName": "",
+   "FacialName": "",
+   "MoveSpeedType": 0
+  },
+  {
+   "Type": 3,
+   "SideFrom": 4,
+   "SideFromOffsetX": 0,
+   "SideTo": 4,
+   "SideToOffsetX": 0,
+   "DepthType": 0,
+   "Character2dId": 10,
+   "CostumeType": "",
+   "MotionName": "",
+   "FacialName": "",
+   "MoveSpeedType": 0
+  },
+  {
+   "Type": 3,
+   "SideFrom": 4,
+   "SideFromOffsetX": 0,
+   "SideTo": 4,
+   "SideToOffsetX": 0,
+   "DepthType": 0,
+   "Character2dId": 20,
+   "CostumeType": "",
+   "MotionName": "",
+   "FacialName": "",
+   "MoveSpeedType": 0
+  }
+ ],
+ "SoundData": [
+  {
+   "PlayMode": 0,
+   "Bgm": "bgm00020",
+   "Se": "",
+   "Volume": 1,
+   "SeBundleName": "",
+   "Duration": 0,
+   "BgmBlockIndex": 0
+  }
+ ],
+ "SpecialEffectData": [
+  {
+   "EffectType": 2,
+   "StringVal": "",
+   "StringValSub": "",
+   "Duration": 0,
+   "IntVal": 0
+  },
+  {
+   "EffectType": 1,
+   "StringVal": "",
+   "StringValSub": "",
+   "Duration": 1,
+   "IntVal": 0
+  },
+  {
+   "EffectType": 8,
+   "StringVal": "示例剧情",
+   "StringValSub": "",
+   "Duration": 0,
+   "IntVal": 0
+  },
+  {
+   "EffectType": 18,
+   "StringVal": "PJSK Scenario Player",
+   "StringValSub": "",
+   "Duration": 0,
+   "IntVal": 0
+  },
+  {
+   "EffectType": 6,
+   "StringVal": "",
+   "StringValSub": "",
+   "Duration": 0.6,
+   "IntVal": 0
+  },
+  {
+   "EffectType": 4,
+   "StringVal": "",
+   "StringValSub": "",
+   "Duration": 0.5,
+   "IntVal": 0
+  },
+  {
+   "EffectType": 3,
+   "StringVal": "",
+   "StringValSub": "",
+   "Duration": 0.5,
+   "IntVal": 0
+  },
+  {
+   "EffectType": 2,
+   "StringVal": "",
+   "StringValSub": "",
+   "Duration": 1.5,
+   "IntVal": 0
+  }
+ ],
+ "ScenarioSnippetCharacterLayoutModes": []
+}

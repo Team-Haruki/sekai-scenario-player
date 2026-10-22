@@ -1,0 +1,14 @@
+name: Feature request
+description: A missing action or effect, or an improvement to the library API or the preview site
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you'd like
+    validations:
+      required: true
+  - type: input
+    id: scenario
+    attributes:
+      label: A scenario ID that uses it (if any)

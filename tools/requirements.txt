@@ -1,0 +1,4 @@
+# tools/fx_convert.py
+UnityPy>=1.20
+lz4
+PyYAML
