@@ -38,13 +38,13 @@ tools/fx_convert.py      converts AssetRipper-exported effect / background prefa
 The game runs all snippets **in parallel**, not one awaited after another. Restored from the coroutines of `Sekai.ScenarioPlayer`:
 
 - An **in-flight set**, `executeSnippets`. For each snippet `PlayCore`:
-  1. passes the **consumer-side barrier** `WaitOtherFinished`: with `ProgressBehavior == Now` it continues at once; with `== WaitFinished` it waits frame by frame until the in-flight set is empty;
+  1. passes the **consumer-side barrier** `WaitOtherFinished`: with `ProgressBehavior == Now` it goes out the frame after the snippet before it; with `== WaitFinished` it waits frame by frame until the in-flight set is empty;
   2. adds the snippet to the set;
   3. starts it with `Execute(handler)` in parallel, **without awaiting**;
-  4. increments sequenceId, with no extra frame between snippets.
+  4. increments sequenceId.
 
   There is a ~10-frame pause at the start, and `WaitAllFinished` drains the set at the end.
-- Each action consumes its own `Delay` when it starts (`WaitDelaySnippet`, accumulating deltaTime). **A delay never blocks the barrier.**
+- Each action consumes its own `Delay` when it starts (`WaitDelaySnippet`, accumulating deltaTime), counted from dispatch; with no delay the action still starts a frame after dispatch. **A delay never blocks the barrier.**
 - **When each action calls `FinishSnippet` (leaves the set) sets the whole rhythm:**
 
 | Action | FinishSnippet |
@@ -63,18 +63,19 @@ Keep this model when changing handlers. Every wait and tween must go through `cl
 
 ## Implemented
 
-- **Talk (1)**: 0.06 s per character, 0.2 s window fade-in.
-  - Auto: with a voice, wait for it to end, then 0.5 s more; without one, 2.0 s; 30 s at most.
+- **Talk (1)**: 0.06 s per character; typing waits out the 0.2 s window fade-in whenever the window opens (the first line, and the line after a `WhenFinishCloseWindow` one).
+  - Auto (`ShowWords_d__95`): without a voice, 2.0 s after typing. With one: if it already ended when typing ends, 2.0 s; otherwise wait for it to end (30 s at most), then 0.5 s more.
+  - Auto, voiced lines only (`ScenarioPlayer.CheckAutoModeTalkNext`): the page also waits until no `CharacterLayout` snippet is in flight and every shown character's body motion has ended, then 0.5 s more. A short line over a 2.6 s motion holds about 3.1 s; a `ChangeMotion` that starts late in the line holds it past the voice.
   - Manual: the first tap finishes typing, the second advances and cuts the voice.
   - Closing the window flushes pending ChangeMotions and stops the voice.
   - Timed motions: with `MotionChangeFrom == PlayTime`, they fire at `TimingSyncValue` seconds.
 - **CharacterLayout (2)**:
-  - `Apper`: 0.1 s fade-in, and the snippet finishes after 0.2 s (`AppearCharacter` → `CharacterMoveTo(…, 0.2)`); a slide to `SideTo` runs on without gating. An empty `CostumeType` reuses the current model; all costumes are preloaded.
+  - `Apper`: 0.1 s fade-in, and the snippet finishes with the fade, ~0.134 s after dispatch in a game trace; a slide to `SideTo` runs on without gating. An empty `CostumeType` reuses the current model; all costumes are preloaded, and each is drawn once off-screen as it loads so its first fade doesn't wait on texture upload and shader compiles.
   - `Hide`: 0.1 s fade-out after 0.075 s (`timeMultiplierInSkipMode`, 0.5, × 0.15 s), from `SideFrom` when set; sliding out to `SideTo`, the fade starts 0.5 × move − 0.1 s in. The model is kept.
   - A model fades as one image: the game draws it to a render texture and fades the `RawImage` (`Live2DModelView.FadeOpacity`, linear), so the stage puts the opacity on an `AlphaFilter`, not on the model's own alpha (that fades each part separately and overlaps show through).
   - `Move`: 0.5 s (normal) / 0.33 s (fast) / 0.75 s (slow).
   - `ShakeX/Y`; slide-in when `SideFrom ≠ SideTo`.
-- **CharacterMotion (4)**: switches motion / facial from `LayoutData`, at once and without blocking.
+- **CharacterMotion (4)**: switches motion / facial from `LayoutData`, at once and without blocking. A new body motion always takes over the one playing (`ChangeMotion` → `ChangeMotionCore`); the same motion restarts with a 0.125 s blend, others blend over 0.5 s.
 - **SpecialEffect (6)**:
   - black / white fades, SEKAI transitions (including the 3rd anniversary version);
   - telop, place info, full-screen text, two-way choice;
@@ -113,6 +114,7 @@ The patches in `assets.ts` cover where this stack differs from the game:
 - **Eye blink**: the library only blinks through the model3 `EyeBlink` group, which is empty in PJSK models, so the game's `|sin|` curve is driven here.
 - **Breath**: the library's default breath sways the head and body; it is cleared and only `ParamBreath` is driven.
 - **Lip-sync**: the library's mouth curve isn't the game's; the `Live2DVoice` curve is computed and set directly.
+- **Motion priority**: the library's `MotionState` turns a `NORMAL` motion away while another is playing, and a motion that is already current away at any priority. The game interrupts and restarts, so motions start at `FORCE` and a current one is released first.
 
 ## Pitfalls
 

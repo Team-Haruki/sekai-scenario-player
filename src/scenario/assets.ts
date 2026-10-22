@@ -33,6 +33,9 @@ export function buildMotionIndex(scn: ScenarioSceneData): MotionIndex {
   return { motions, facials };
 }
 
+// MotionPriority.FORCE: NORMAL would turn a motion away while another plays
+const FORCE = 3;
+
 // A loaded character model + helpers to drive its two motion managers.
 export class CharacterModel {
   private motionIdx = new Map<string, number>();
@@ -247,7 +250,8 @@ export class CharacterModel {
         if (!motion) return;
         const fadeIn = motion.getFadeInTime();
         motion.setFadeInTime(0);
-        await pmm[track].startMotion(group, index);
+        CharacterModel.release(pmm[track], group, index);
+        await pmm[track].startMotion(group, index, FORCE);
         // fade-in is evaluated every update, so restore it only once a normal
         // fade from this start would have finished
         setTimeout(() => motion.setFadeInTime(fadeIn), Math.max(0, fadeIn) * 1000 + 100);
@@ -257,14 +261,39 @@ export class CharacterModel {
   }
 
   // manager[0] = facial track, manager[1] = body track (mulmotion).
+  // ScenarioModel.ChangeMotion → ChangeMotionCore: a new motion always takes
+  // over, and the one already playing starts again, blending in over 0.125 s
+  // (other motions over their build blend time, 0.5 s by default).
   play(motionName?: string, facialName?: string) {
-    const pmm = (this.display as any).internalModel.parallelMotionManager;
+    const internal = (this.display as any).internalModel;
+    const pmm = internal.parallelMotionManager;
     if (facialName && this.facialIdx.has(facialName)) {
-      pmm[0].startMotion("Expression", this.facialIdx.get(facialName)); // fade-in
+      const i = this.facialIdx.get(facialName)!;
+      if (pmm[0].state.currentIndex !== i) void pmm[0].startMotion("Expression", i, FORCE); // fade-in
       void this.holdFacial(facialName); // + persist (lib doesn't loop it)
     }
-    if (motionName && this.motionIdx.has(motionName))
-      pmm[1].startMotion("Motion", this.motionIdx.get(motionName));
+    if (motionName && this.motionIdx.has(motionName)) {
+      const i = this.motionIdx.get(motionName)!;
+      const motion = internal.motionManager.motionGroups.Motion?.[i];
+      motion?.setFadeInTime(pmm[1].state.currentIndex === i ? 0.125 : 0.5);
+      CharacterModel.release(pmm[1], "Motion", i);
+      void pmm[1].startMotion("Motion", i, FORCE);
+    }
+  }
+
+  // The lib's MotionState turns away a motion that is already current, even at
+  // FORCE priority: forget it so startMotion restarts it.
+  private static release(track: any, group: string, index: number) {
+    if (track.state.currentGroup === group && track.state.currentIndex === index) track.state.reset();
+  }
+
+  // ScenarioModel.IsMotionFinished on the body layer: a body motion is still
+  // starting or playing. (The motion3 files say Meta.Loop, but the game's clips
+  // play once, as the lib plays them.)
+  motionBusy(): boolean {
+    const body = (this.display as any).internalModel.parallelMotionManager[1];
+    if (!body) return false;
+    return body.state.reservedIndex !== undefined || !body.isFinished();
   }
 
   // Parse a facial's parameter values (constant "held" expression) and keep

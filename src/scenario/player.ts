@@ -27,6 +27,7 @@ import type { EpisodeAssets } from "./resolver";
 import { DialogueBox } from "./dialogue";
 import { EASE, parseDolly, parseEase } from "./camera";
 import { Effects, RGBA } from "./effects";
+import { withTimeout } from "./net";
 import { ColorEffect, ModelEffect, Stage } from "./stage";
 import {
   Action,
@@ -47,6 +48,7 @@ const AUTO_PAGE_DELAY = 2000; // TalkWindow.prefab autoTextNextPageDelay: no voi
 const AUTO_POST_VOICE = 500; // after the voice clip ends
 const VOICE_CAP = 30000; // give up waiting for a voice after this
 const PREFETCH_TALKS = 3; // lines ahead whose voices, SEs and backgrounds are fetched
+const FIRST_VOICE_WAIT = 5000; // playback waits this long at most for the first line's voice
 // 早送り: in-game capture advances a line every ~0.5-1s with the text shown at once.
 const FAST_SCALE = 3;
 const FAST_PAGE_HOLD = 500 * FAST_SCALE; // → 0.5s real time at FAST_SCALE
@@ -189,8 +191,9 @@ export class ScenarioPlayer {
     this.stage.setLayoutMode(this.scn.FirstCharacterLayoutMode ?? 0);
     this.stage.setBackground(this.scn.FirstBackground); // non-blocking
     // Load every appearing costume up front (game loads NeedBundleNames before
-    // play) so Appers are instant fades, not load stalls.
-    await this.preload();
+    // play) so Appers are instant fades, not load stalls; and the first line's
+    // voice, which would otherwise start late by its download.
+    await Promise.all([this.preload(), withTimeout(this.firstVoice(), FIRST_VOICE_WAIT, undefined)]);
     if (this.stopped) return;
     this.onReady?.();
     // resolves when whichever run is current (the first, or one started by a
@@ -241,6 +244,13 @@ export class ScenarioPlayer {
     ));
   }
 
+  private firstVoice(): Promise<void> {
+    const s = this.scn.Snippets.find((x) => x.Action === Action.Talk);
+    const v = s && this.scn.TalkData[s.ReferenceIndex]?.Voices?.[0];
+    if (!v || this.fast || !this.voiceEnabled) return Promise.resolve();
+    return this.audio.preload(this.assets.voice(this.scn.ScenarioId, v.VoiceId, { character2dId: v.Character2dId }));
+  }
+
   // Fetch the voices, SEs and backgrounds of the next few lines while this one
   // plays, so a voice starts with its line instead of after its download, and
   // quick background cuts (each waits for its image) keep their pace.
@@ -253,15 +263,15 @@ export class ScenarioPlayer {
       if (s.Action === Action.Talk) {
         talks++;
         const v = TalkData[s.ReferenceIndex]?.Voices?.[0];
-        if (v && voice) this.audio.preload(this.assets.voice(ScenarioId, v.VoiceId, { character2dId: v.Character2dId }));
+        if (v && voice) void this.audio.preload(this.assets.voice(ScenarioId, v.VoiceId, { character2dId: v.Character2dId }));
       } else if (s.Action === Action.Sound) {
         const se = SoundData[s.ReferenceIndex]?.Se;
-        if (se && sound) this.audio.preload(this.assets.se(se));
+        if (se && sound) void this.audio.preload(this.assets.se(se));
       } else if (s.Action === Action.SpecialEffect) {
         const e = SpecialEffectData[s.ReferenceIndex];
         if (e?.EffectType === SpecialEffectType.ChangeBackground) this.stage.preloadBackground(e.StringVal);
         else if (e?.EffectType === SpecialEffectType.FullScreenText && e.StringValSub && voice)
-          this.audio.preload(this.assets.voice(ScenarioId, e.StringValSub));
+          void this.audio.preload(this.assets.voice(ScenarioId, e.StringValSub));
       }
     }
   }
@@ -475,8 +485,10 @@ export class ScenarioPlayer {
   }
 
   // ── barrier / drain ──────────────────────────────────────────────────────
+  // The game sequences one snippet per frame: a Now snippet goes out the frame
+  // after the one before it, a WaitFinished one once nothing is in flight.
   private async waitOtherFinished(s: Snippet) {
-    if (s.ProgressBehavior !== Progress.WaitFinished) return; // Now: no wait
+    if (s.ProgressBehavior !== Progress.WaitFinished) return this.nextFrame();
     while (this.executeSnippets.size > 0) await this.nextFrame();
   }
   private async waitAllFinished() {
@@ -484,8 +496,9 @@ export class ScenarioPlayer {
   }
 
   // ── per-action pre-delay (consumed at the START of every action) ─────────
+  // Counted from dispatch; with none the action still starts a frame later.
   private async waitDelaySnippet(s: Snippet, param: InFlight) {
-    if (s.Delay <= 0) return;
+    if (s.Delay <= 0) return this.nextFrame();
     const end = Date.now() + (s.Delay * 1000) / this.clock.scale;
     while (Date.now() < end) {
       if (this.skipMode) return;
@@ -600,12 +613,30 @@ export class ScenarioPlayer {
     // AUTO (ShowWords_d__95):
     await typed;
     if (gen !== this.gen) return;
-    if (!voiceP || voiceEnded) {
-      await this.clock.sleep(AUTO_PAGE_DELAY); // no voice / voice already done → 2.0s
-    } else {
-      await Promise.race([voiceP, this.clock.sleep(VOICE_CAP)]); // wait the voice out (cap 30s)
-      await this.clock.sleep(AUTO_POST_VOICE); // then +0.5s
+    if (!voiceP) {
+      await this.clock.sleep(AUTO_PAGE_DELAY); // no voice → 2.0s
+      return;
     }
+    if (voiceEnded && this.autoTalkNext()) {
+      await this.clock.sleep(AUTO_PAGE_DELAY); // voice already done → 2.0s
+      return;
+    }
+    if (!voiceEnded) {
+      await Promise.race([voiceP, this.clock.sleep(VOICE_CAP)]); // wait the voice out (cap 30s)
+      await this.nextFrame(); // PlaybackManager.Update notices the end on its next frame
+    }
+    while (!this.fast && !this.autoTalkNext()) {
+      await this.nextFrame(); // a layout or a shown character's motion is still running
+      if (gen !== this.gen) return;
+    }
+    await this.clock.sleep(AUTO_POST_VOICE); // then +0.5s
+  }
+
+  // CheckAutoModeTalkNext: a voiced line pages on only once no Layout snippet
+  // is in flight and every shown character's body motion has ended.
+  private autoTalkNext(): boolean {
+    for (const s of this.executeSnippets.keys()) if (s.Action === Action.CharacterLayout) return false;
+    return !this.stage.motionsBusy();
   }
 
   private onFinishTalkWindow(s: Snippet) {
