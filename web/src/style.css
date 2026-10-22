@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+/* phones held sideways: stage and panels side by side */
+@custom-variant short-landscape (@media (orientation: landscape) and (max-height: 600px));
 
 /* Palette lifted from the game's own UI: ink #444466 (text on white panels),
    slate #3a3a58 (story select base), lavender white #ebebf2, selection pink
@@ -87,5 +89,17 @@
   body { @apply bg-background text-foreground font-sans antialiased; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+}
+
+/* the stage and its control bar share one width: the column on phones, capped
+   by the height that is left (header 3.5rem, controls, padding) elsewhere */
+@layer components {
+  .stage-width { width: 100%; }
+  @media (orientation: landscape) and (max-height: 600px) {
+    .stage-width { width: min(60vw, calc((100dvh - 8rem) * 16 / 9)); }
+  }
+  @media (min-width: 1024px) {
+    .stage-width { width: min(100%, calc((100dvh - 14rem) * 16 / 9)); }
   }
 }

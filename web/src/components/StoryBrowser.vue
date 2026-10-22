@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type Catalog, type Story, type Tab, TABS, UNITS, storiesOf, unitColor } from "@/lib/catalog";
-import { cn } from "@/lib/utils";
+import { centerInScrollArea, cn } from "@/lib/utils";
 
 const props = defineProps<{ catalog: Catalog | null; loading: boolean; current?: string; base: string }>();
 const emit = defineEmits<{ pick: [sid: string]; settings: []; sample: []; open: [] }>();
@@ -64,7 +64,7 @@ watch(
           tab.value = t.key;
           opened.value = new Set(opened.value).add(key);
           await nextTick();
-          list.value?.querySelector("[data-current]")?.scrollIntoView({ block: "center" });
+          centerInScrollArea(list.value?.querySelector("[data-current]"), "instant");
           return;
         }
   },

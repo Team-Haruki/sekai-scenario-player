@@ -71,15 +71,15 @@ const isDev = import.meta.env.DEV;
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-xl">
-      <DialogHeader>
+    <DialogContent class="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-xl">
+      <DialogHeader class="text-left">
         <DialogTitle>素材与播放设置</DialogTitle>
         <DialogDescription>
           本站只包含播放器本身。模型、语音、背景等游戏素材来自你自己的素材服务器，地址保存在这台设备的浏览器里。
         </DialogDescription>
       </DialogHeader>
 
-      <div class="grid gap-5">
+      <div class="grid min-w-0 gap-5">
         <div class="grid gap-2">
           <Label for="assets-url">素材服务器地址</Label>
           <div class="flex gap-2">
@@ -105,18 +105,18 @@ const isDev = import.meta.env.DEV;
           </ul>
         </div>
 
-        <div class="grid gap-2 rounded-lg bg-muted p-3 text-sm">
+        <div class="grid min-w-0 gap-2 rounded-lg bg-muted p-3 text-sm">
           <p class="leading-relaxed">
             手上有 asset-updater 导出的素材树？在仓库里运行下面的命令，再把地址填成
             <code class="font-bold">{{ LOCAL_SERVER }}</code>：
           </p>
-          <div class="flex items-center gap-2">
+          <div class="flex min-w-0 items-center gap-2">
             <code class="min-w-0 flex-1 overflow-x-auto rounded-md bg-card px-2.5 py-1.5 text-xs whitespace-nowrap">{{ command }}</code>
             <Button size="icon-sm" variant="ghost" aria-label="复制命令" @click="copy"><Copy /></Button>
           </div>
         </div>
 
-        <div class="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-4">
+        <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-4">
           <div>
             <Label>播放器界面语言</Label>
             <p class="text-xs text-muted-foreground">开始按钮和右上角菜单的文字</p>
