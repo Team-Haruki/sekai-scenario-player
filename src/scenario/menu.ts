@@ -33,6 +33,10 @@ const SMALL = [
   { key: "log", cx: 196 + 72, icon: "ic_log", iw: 52, ih: 32, ix: 1.6 },
 ];
 
+// labels are host strings going into innerHTML
+const esc = (s: string) =>
+  s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
 const px = (v: number) => `${(v * S).toFixed(2)}px`;
 
 export class ScenarioMenu {
@@ -59,13 +63,13 @@ export class ScenarioMenu {
       const tw = 280 - b.inset;
       html += `<div class="pjsk-smp-btn wide" data-k="${b.key}" style="top:${px(b.top)}">
         ${icon(b.icon, b.iw, b.ih, `left:${px(140 - 77.4 - b.iw / 2)};top:${px(48 - b.ih / 2)}`)}
-        <span style="left:${px(140 + b.tx - tw / 2)};width:${px(tw)};letter-spacing:${b.sp / 100}em">${labels[b.key as keyof MenuLabels]}</span>
+        <span style="left:${px(140 + b.tx - tw / 2)};width:${px(tw)};letter-spacing:${b.sp / 100}em">${esc(labels[b.key as keyof MenuLabels])}</span>
       </div>`;
     }
     for (const b of SMALL)
       html += `<div class="pjsk-smp-btn small" data-k="${b.key}" style="left:${px(b.cx - 68)}">
         ${icon(b.icon, b.iw, b.ih, `left:${px(68 + b.ix - b.iw / 2)};top:${px(56 - 16 - b.ih / 2)}`)}
-        <span>${labels[b.key as keyof MenuLabels]}</span>
+        <span>${esc(labels[b.key as keyof MenuLabels])}</span>
       </div>`;
     this.panel.innerHTML = html;
     parent.appendChild(this.panel);

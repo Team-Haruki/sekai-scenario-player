@@ -3,7 +3,7 @@
 
 import type { Live2DModel } from "@sekai-world/pixi-live2d-display-mulmotion/cubism4";
 import { getLive2D } from "./live2d";
-import type { AssetResolver, ModelManifest } from "./resolver";
+import type { EpisodeAssets, ModelManifest } from "./resolver";
 import type { ScenarioSceneData } from "./types";
 
 // Per-Character2dId sets of motion/facial names referenced anywhere in the
@@ -89,7 +89,7 @@ export class CharacterModel {
     char2dId: number,
     manifest: ModelManifest,
     midx: MotionIndex,
-    assets: AssetResolver,
+    assets: EpisodeAssets,
   ): Promise<CharacterModel> {
     const m = manifest[costume];
     if (!m) throw new Error(`no manifest entry for costume ${costume}`);
@@ -99,20 +99,31 @@ export class CharacterModel {
     if (!res.ok) throw new Error(`${costume}: model HTTP ${res.status}`);
     const settings: any = await res.json();
     settings.url = modelUrl; // textures / physics resolve relative to it
+    // the host may point physics elsewhere (exports that renamed the file) or drop it
+    const physics = assets.physics(m);
+    if (physics === null) delete settings.FileReferences.Physics;
+    else if (physics !== undefined) settings.FileReferences.Physics = physics;
 
-    const motionNames = [...(midx.motions.get(char2dId) ?? [])];
-    const facialNames = [...(midx.facials.get(char2dId) ?? [])];
-    const clip = (kind: "motion" | "facial", n: string) => assets.motion(m, kind, n);
+    // clips the resolver has no file for are left out (startMotion then skips them)
+    const clips = (kind: "motion" | "facial", names: Set<string> | undefined) =>
+      [...(names ?? [])].flatMap((n) => {
+        const url = assets.motion(m, kind, n);
+        return url ? [[n, url] as const] : [];
+      });
+    const motionClips = clips("motion", midx.motions.get(char2dId));
+    const facialClips = clips("facial", midx.facials.get(char2dId));
+    const motionNames = motionClips.map(([n]) => n);
+    const facialNames = facialClips.map(([n]) => n);
     settings.FileReferences.Motions = {
-      Motion: motionNames.map((n) => ({
+      Motion: motionClips.map(([n, url]) => ({
         Name: n,
-        File: clip("motion", n),
+        File: url,
         FadeInTime: 0.5, // ChangeMotionCore default
         FadeOutTime: 0.5,
       })),
-      Expression: facialNames.map((n) => ({
+      Expression: facialClips.map(([n, url]) => ({
         Name: n,
-        File: clip("facial", n),
+        File: url,
         FadeInTime: 0.25, // ChangeModelFacial GetBlendInTime default
         FadeOutTime: 0.25,
       })),
@@ -136,7 +147,7 @@ export class CharacterModel {
     const cm = new CharacterModel(display);
     motionNames.forEach((n, i) => cm.motionIdx.set(n, i));
     facialNames.forEach((n, i) => cm.facialIdx.set(n, i));
-    facialNames.forEach((n) => cm.facialUrls.set(n, clip("facial", n)));
+    for (const [n, url] of facialClips) cm.facialUrls.set(n, url);
     // after motions/expressions apply: hold facial + eye-blink + breath + lip-sync
     // (matches Live2DEyeBlinkController.PlayAutoMode + Live2DModel.LateUpdate +
     // Live2DVoice.UpdateParam).

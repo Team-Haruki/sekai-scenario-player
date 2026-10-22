@@ -63,7 +63,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 
 | Method | Description |
 |---|---|
-| `load(scenario, { autoplay? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). Resolves once playback starts or the start button shows |
+| `load(scenario, { autoplay?, context? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). `context` reaches every per-episode resolver call as `ctx.data`. Resolves once playback starts or the start button shows |
 | `play()` | Start the loaded scenario. Call it from a user gesture when the browser blocked autoplay |
 | `jumpTo(index)` | Restart at snippet `index`, with the stage rebuilt as it was at that point |
 | `advance()` | Same as tapping the stage: finish typing, or advance a line waiting for input |
@@ -110,7 +110,30 @@ const assets = createAssetResolver("https://cdn.example/pjsk/", {
 createPlayer(el, { assets });
 ```
 
-Every `AssetResolver` member returns a URL string: `scenario(id)`, `modelManifest()`, `model(entry)`, `motion(entry, kind, name)`, `bgm(id)`, `se(id)`, `voice(scenarioId, voiceId)`, `background(id)`, `movie(name)`, `fx(path)`, `ui(path)`, `font(file)`.
+Members and what they return:
+
+| Member | Returns |
+|---|---|
+| `scenario(id)`, `modelManifest()`, `fx(path)`, `ui(path)`, `font(file)` | a URL |
+| `model(entry, ctx)` | the costume's `.model3` URL; textures and physics resolve relative to it |
+| `physics?(entry, ctx)` | optional: a physics file to use instead of the model3's reference, or `null` to drop physics |
+| `motion(entry, kind, name, ctx)` | a motion3 URL, or `null` when the costume has no such clip (it is skipped) |
+| `bgm(id, ctx)`, `se(id, ctx)`, `voice(scenarioId, voiceId, ctx)`, `background(id, ctx)` | `AssetUrls`: one URL, or candidate URLs tried in order until one loads; `null` / `[]` skips the asset |
+| `movie(name, ctx)` | a URL, or `null` to skip the movie |
+
+`ctx` is the episode being loaded, `{ scenario, data }`, where `data` is the `context` passed to `load()`. That lets a resolver depend on the episode, for example look in different folders for card stories:
+
+```ts
+const assets = createAssetResolver(base, {
+  voice: (scenarioId, voiceId, ctx) => {
+    const dirs = (ctx.data as { kind?: string })?.kind === "card" ? ["card_scenario", "scenario"] : ["scenario", "card_scenario"];
+    return dirs.map((d) => `${base}${d}/voice/${scenarioId}/${voiceId}.mp3`);
+  },
+});
+await player.load(scenarioId, { context: { kind: "card" } });
+```
+
+Manifest entries are passed to `model` / `motion` / `physics` as they are. The default resolver reads `modelDir`, `modelFile`, `motionDir` and `motionBase`; a host with its own rules can store whatever those rules need in the entries.
 
 ## Transcript
 

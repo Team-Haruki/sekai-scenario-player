@@ -15,7 +15,7 @@ import { setCubismCoreUrl } from "./scenario/live2d";
 import { ScenarioMenu } from "./scenario/menu";
 import { FxManager } from "./scenario/particles";
 import { ScenarioPlayer } from "./scenario/player";
-import { AssetResolver, ModelManifest, createAssetResolver } from "./scenario/resolver";
+import { AssetResolver, ModelManifest, bindAssets, createAssetResolver } from "./scenario/resolver";
 import { UiSprites } from "./scenario/sprites";
 import { Stage } from "./scenario/stage";
 import type { ScenarioSceneData } from "./scenario/types";
@@ -289,7 +289,14 @@ export class PjskPlayer {
    * or a URL) in place of the current one. Resolves once it is playing or
    * waiting for the start button.
    */
-  async load(scenario: ScenarioSceneData | string | URL, opts: { autoplay?: boolean | "auto" } = {}): Promise<void> {
+  async load(
+    scenario: ScenarioSceneData | string | URL,
+    opts: {
+      autoplay?: boolean | "auto";
+      /** Handed to every per-episode resolver call as `ctx.data` (episode kind, bundle, an asset index …). */
+      context?: unknown;
+    } = {},
+  ): Promise<void> {
     const seq = ++this.loadSeq;
     this.teardown();
     this.menu?.close();
@@ -314,8 +321,9 @@ export class PjskPlayer {
     }
     if (seq !== this.loadSeq || this.destroyed) return; // another load() came in meanwhile
 
-    const stage = new Stage(this.app, manifest, buildMotionIndex(scn), this.assets, this.clock);
-    const player = new ScenarioPlayer(scn, stage, this.dialogue, this.audio, this.effects, this.assets, this.clock);
+    const assets = bindAssets(this.assets, { scenario: scn, data: opts.context });
+    const stage = new Stage(this.app, manifest, buildMotionIndex(scn), assets, this.clock);
+    const player = new ScenarioPlayer(scn, stage, this.dialogue, this.audio, this.effects, assets, this.clock);
     const fx = new FxManager(
       this.app.ticker,
       { bottom: stage.fxBottom, back: stage.fxBack, front: stage.fxLayer, top: stage.fxTop },
@@ -445,6 +453,8 @@ export class PjskPlayer {
     const h = this.root.clientHeight || (w * STAGE_H) / STAGE_W;
     const k = Math.min(w / STAGE_W, h / STAGE_H) || 1;
     this.stageEl.style.transform = `translate(${(w - STAGE_W * k) / 2}px, ${(h - STAGE_H * k) / 2}px) scale(${k})`;
+    // keep the spinner / start button / status readable on a small stage
+    this.overlay.style.zoom = String(k < 0.6 ? Math.min(2.6, 0.6 / k) : 1);
   }
 }
 

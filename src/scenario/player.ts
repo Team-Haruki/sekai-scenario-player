@@ -23,7 +23,7 @@
 
 import { AudioManager } from "./audio";
 import type { Clock } from "./clock";
-import type { AssetResolver } from "./resolver";
+import type { EpisodeAssets } from "./resolver";
 import { DialogueBox } from "./dialogue";
 import { EASE, parseDolly, parseEase } from "./camera";
 import { Effects, RGBA } from "./effects";
@@ -123,7 +123,7 @@ export class ScenarioPlayer {
     private dialogue: DialogueBox,
     private audio: AudioManager,
     private effects: Effects,
-    private assets: AssetResolver,
+    private assets: EpisodeAssets,
     private clock: Clock,
   ) {}
 
@@ -725,8 +725,8 @@ export class ScenarioPlayer {
         const gen = this.gen;
         void (async () => {
           if (e.Duration > 0) await this.clock.sleep(e.Duration * 1000);
-          if (gen === this.gen) this.onScenarioEffect?.(e.StringVal, play);
-        })();
+          if (gen === this.gen) await this.onScenarioEffect?.(e.StringVal, play);
+        })().catch((err: unknown) => console.warn("scenario effect failed", e.StringVal, err));
         return;
       }
       case T.PlaceInfo:
@@ -750,9 +750,12 @@ export class ScenarioPlayer {
         if (opts.length > 1) await this.effects.choose(opts);
         return;
       }
-      case T.Movie:
+      case T.Movie: {
+        const url = this.assets.movie(e.StringVal);
+        if (!url) return; // the asset source has no such movie
         this.stage.hideAll();
-        return this.effects.movie(this.assets.movie(e.StringVal), () => {});
+        return this.effects.movie(url, () => {});
+      }
       case T.BlurIn:
         return this.stage.cameraBlur(true, e.Duration);
       case T.BlurOut:
