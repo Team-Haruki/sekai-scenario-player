@@ -20,7 +20,7 @@ src/
    ├─ effects.ts         full-screen effect layers (colour fades, telop, side wipes, place, movie,
    │                     full-screen text, choices)
    ├─ particles.ts       particle runtime (subset of Unity Shuriken + UI Image / Animator)
-   ├─ audio.ts           BGM crossfades, SE, voice (Web Audio analyser drives lip-sync)
+   ├─ audio.ts           BGM crossfades, SE and voice clips fetched ahead (Web Audio; the analyser drives lip-sync), gesture unlock
    ├─ player.ts          ★ timeline engine and action handlers, jumps, fast-forward
    ├─ clock.ts           per-player clock every wait and tween goes through
    ├─ menu.ts            the ⋯ story menu (ScenarioMenu)
@@ -117,7 +117,9 @@ The patches in `assets.ts` cover where this stack differs from the game:
 
 - Import from the `@sekai-world/pixi-live2d-display-mulmotion/cubism4` entry. The package root requires the Cubism 2 runtime, and the `cubism4` entry requires `window.Live2DCubismCore` at import time, so `live2d.ts` loads Core first and then imports the plugin dynamically.
 - Drive tweens and waits with `setTimeout`, not `requestAnimationFrame`: under headless Chrome's `--virtual-time-budget` rAF doesn't advance and an `await` hangs forever.
-- Load large background images with the non-blocking `PIXI.Texture.from`; don't block the timeline on `await PIXI.Assets.load`.
+- Load backgrounds with `PIXI.Texture.fromURL` behind a timeout; don't block the timeline on `await PIXI.Assets.load`. `PIXI.Texture.from(url)` starts the load itself and its rejection is never handled, so a missing image becomes an unhandled error.
+- A costume's files load side by side: the Live2D runtime, the motion and facial clips and the physics are fetched while the model3, moc and textures load (`fetchAhead` in `live2d.ts` hands them to the library's loader).
+- On iOS every `<audio>` element and the audio context must first be started inside a user gesture; a later `play()` outside one is refused. Keep long-lived elements and prime them in a tap rather than creating one per clip.
 - Pass `{ autoHitTest: false, autoFocus: false }` to `Live2DModel.from`.
 - Headless Chrome screenshots for checking a change:
 

@@ -212,14 +212,29 @@ export class Stage {
   }
 
   // ── background ────────────────────────────────────────────────────────────
-  // The first candidate that loads; an empty texture when none does.
-  private async loadBgTexture(id: string): Promise<PIXI.Texture> {
-    for (const url of this.assets.background(id)) {
-      const tex = await this.loadTexture(url);
-      if (tex) return tex;
+  // The first candidate that loads; an empty texture when none does. Loads are
+  // shared, so a background preloaded a few lines early swaps in at once.
+  private bgLoads = new Map<string, Promise<PIXI.Texture>>();
+  private loadBgTexture(id: string): Promise<PIXI.Texture> {
+    let p = this.bgLoads.get(id);
+    if (!p) {
+      p = (async () => {
+        for (const url of this.assets.background(id)) {
+          const tex = await this.loadTexture(url);
+          if (tex) return tex;
+        }
+        console.warn("bg load failed", id);
+        this.bgLoads.delete(id); // the next ChangeBackground tries again
+        return PIXI.Texture.EMPTY;
+      })();
+      this.bgLoads.set(id, p);
     }
-    console.warn("bg load failed", id);
-    return PIXI.Texture.EMPTY;
+    return p;
+  }
+
+  /** Start loading a background that shows soon (ChangeBackground waits for its image). */
+  preloadBackground(id: string) {
+    if (id) void this.loadBgTexture(id);
   }
 
   // fromURL, not from(): from() starts the load itself and nothing catches its
@@ -334,28 +349,42 @@ export class Stage {
     this.root.position.set(this.w / 2 + this.shakeOff[0] * REF, this.h / 2 - this.shakeOff[1] * REF);
   }
 
-  // CameraMove (42): DOLocalMove OutQuad; screen = zoom·p − cam
+  // CameraMove (42): DOLocalMove OutQuad; screen = zoom·p − cam. A newer move
+  // kills this one, and its snippet finishes then: a long pan cut short by
+  // the next shot doesn't hold back the WaitFinished snippets after it.
   cameraMove(x: number, y: number, ms: number) {
     const token = ++this.camTween;
     const x0 = this.cam.x;
     const y0 = this.cam.y;
-    return this.clock.tween(ms, 0, 1, (k) => {
-      if (token !== this.camTween) return;
-      this.cam.x = x0 + (x - x0) * k;
-      this.cam.y = y0 + (y - y0) * k;
-      this.applyCam();
-    }, EASE.OutQuad);
+    return this.clock.tween(
+      ms,
+      0,
+      1,
+      (k) => {
+        this.cam.x = x0 + (x - x0) * k;
+        this.cam.y = y0 + (y - y0) * k;
+        this.applyCam();
+      },
+      EASE.OutQuad,
+      () => token === this.camTween,
+    );
   }
 
-  // CameraZoom (43): DOScale(ScenarioRoot) OutQuad about the screen centre
+  // CameraZoom (43): DOScale(ScenarioRoot) OutQuad about the screen centre (a newer zoom kills it, as above)
   cameraZoom(z: number, ms: number) {
     const token = ++this.zoomTween;
     const z0 = this.cam.zoom;
-    return this.clock.tween(ms, z0, z, (v) => {
-      if (token !== this.zoomTween) return;
-      this.cam.zoom = v;
-      this.applyCam();
-    }, EASE.OutQuad);
+    return this.clock.tween(
+      ms,
+      z0,
+      z,
+      (v) => {
+        this.cam.zoom = v;
+        this.applyCam();
+      },
+      EASE.OutQuad,
+      () => token === this.zoomTween,
+    );
   }
 
   // ShakeScreen (5): (0,−8) kick on Layer_Scenario easing back + DOShakePosition

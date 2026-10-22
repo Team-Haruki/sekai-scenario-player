@@ -13,7 +13,7 @@ npm i github:Team-Haruki/sekai-scenario-player pixi.js@^7.4
 Each release also attaches a built tarball, for package managers that don't run a git dependency's build (Bun, for one):
 
 ```bash
-npm i https://github.com/Team-Haruki/sekai-scenario-player/releases/download/v0.2.1/pjsk-scenario-player-0.2.1.tgz
+npm i https://github.com/Team-Haruki/sekai-scenario-player/releases/download/v0.2.2/pjsk-scenario-player-0.2.2.tgz
 ```
 
 The installed package is named `pjsk-scenario-player`, which is what the imports below use. `pixi.js` v7 is a peer dependency, shared with your app. You can also clone the repository, run `npm run build:lib` and copy `dist/lib/` into your project.
@@ -54,7 +54,9 @@ For Chinese or Korean text, call `setTextScript("zh" | "ko")`. The talk window t
 
 ### Autoplay and voices
 
-Browsers may let `<audio>` play before the first user gesture while keeping the Web Audio context that drives lip-sync suspended. Until that context runs, the player plays voices directly, and mouths follow a synthetic level instead of the waveform. The first tap or key press anywhere starts the context.
+Voices and SEs are fetched a few lines ahead, decoded and played through Web Audio, so a voice starts with its line and lip-sync follows its waveform. iOS Safari allows sound only from an `<audio>` element or audio context started inside a user gesture, so once a scenario is loaded every tap or key press anywhere (the start button's included) starts the context and primes the BGM players; auto mode then needs no further taps.
+
+Browsers may also let `<audio>` play before the first gesture while keeping Web Audio suspended. Until the context runs, the player plays voices from an `<audio>` element and mouths follow a synthetic level instead of the waveform.
 
 ### Live2D Cubism Core
 
