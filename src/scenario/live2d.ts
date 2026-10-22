@@ -34,6 +34,9 @@ function loadScript(src: string) {
 // Counted: two costumes of one character share their motion library.
 const ahead = new Map<string, { p: Promise<unknown>; owners: number }>();
 
+/** Per attempt for a moc or a texture (a few MB): the XHR / image loads they replace had no limit. */
+export const BIG_FILE_TIMEOUT = 60_000;
+
 /** Start fetching these JSON files now; the returned function forgets them (once all their owners did). */
 export function fetchAhead(urls: string[]): () => void {
   const mine = [...new Set(urls.map(abs))];
@@ -74,7 +77,7 @@ export function getLive2D(): Promise<Live2DModule> {
       if (context.type === "json") {
         const p = ahead.get(url)?.p;
         context.result = await (p ? p.catch(() => fetchJson(url)) : fetchJson(url));
-      } else if (context.type === "arraybuffer") context.result = await fetchBuffer(url);
+      } else if (context.type === "arraybuffer") context.result = await fetchBuffer(url, { timeoutMs: BIG_FILE_TIMEOUT });
       else return next();
     });
     return mod;

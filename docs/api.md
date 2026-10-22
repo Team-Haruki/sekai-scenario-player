@@ -134,7 +134,7 @@ The player doesn't wait for every model before it starts.
 - **What it waits for:** the costumes on stage before the third line of dialogue, and the first line's voice (5 s at most). Under the spinner the bar follows those costumes, and the text counts them, the files loaded of those asked for, and the MB so far.
 - **The rest** load while the episode plays, three at a time.
 - **Time limits and retries:** nothing waits forever.
-  - JSON fetches (scenario, manifest, model3, facials) time out after 15 s and are retried twice (network errors and 5xx).
+  - JSON fetches (scenario, manifest, model3, motions, facials, physics) time out after 15 s, a model's moc and textures after 60 s; each is retried twice (network errors and 5xx).
   - A costume that fails to load is retried once.
   - A costume that takes longer than 30 s is given up on. It is still used if it arrives later.
   - An appearance waits at most 12 s for a costume that is still loading. Otherwise that appearance is skipped and the timeline carries on.

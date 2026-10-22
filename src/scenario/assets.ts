@@ -2,7 +2,7 @@
 // (held facials, |sin| eye-blink, ParamBreath, lip-sync smoothing).
 
 import type { Live2DModel } from "@sekai-world/pixi-live2d-display-mulmotion/cubism4";
-import { aheadJson, fetchAhead, getLive2D } from "./live2d";
+import { BIG_FILE_TIMEOUT, aheadJson, fetchAhead, getLive2D } from "./live2d";
 import { fetchBlob, fetchJson } from "./net";
 import type { EpisodeAssets, ModelManifest } from "./resolver";
 import type { ScenarioSceneData } from "./types";
@@ -129,7 +129,7 @@ export class CharacterModel {
       // the textures load now, beside the runtime, through net.ts (handed-in
       // files, the load count); the library gets object URLs for them
       const textures: Promise<string>[] = (settings.FileReferences.Textures ?? []).map((t: string) =>
-        fetchBlob(near(t)).then((b) => URL.createObjectURL(b)),
+        fetchBlob(near(t), { timeoutMs: BIG_FILE_TIMEOUT }).then((b) => URL.createObjectURL(b)),
       );
       releases.push(() => void Promise.allSettled(textures).then((rs) => rs.forEach((r) => r.status === "fulfilled" && URL.revokeObjectURL(r.value))));
 
