@@ -12,7 +12,7 @@
 
 import { EASE, REF, sideFade } from "./camera";
 import type { Clock } from "./clock";
-import { fileUrl } from "./files";
+import { loadFrom } from "./hosts";
 
 export type RGBA = [number, number, number, number];
 
@@ -151,6 +151,8 @@ export class Effects {
   private placeState: "none" | "in" | "shown" | "out" = "none";
   private placeCloseReserved = false;
   private static PLACE_HIDDEN_X = -732 * REF; // panel + tail fully off-screen
+  /** a movie that can't start playing by then is skipped (per host) */
+  private static readonly MOVIE_WAIT = 20_000;
   async showPlace(text: string) {
     this.placeText.textContent = text;
     // TMP auto-size 18..40 ref: shrink to fit one line
@@ -186,18 +188,26 @@ export class Effects {
     const v = this.movieEl;
     await this.colorFade([0, 0, 0, 1], 500);
     hideUi(true);
-    v.src = fileUrl(url);
     v.muted = false;
-    const ok = await new Promise<boolean>((res) => {
-      v.oncanplay = () => res(true);
-      v.onerror = () => res(false);
-      v.load();
-    });
+    // the host's copy, or its fallback's when the host fails; a movie that
+    // can't start within MOVIE_WAIT is skipped
+    const epoch = this.clock.epoch;
+    const ok = await loadFrom(
+      url,
+      (src) =>
+        new Promise<boolean>((res, rej) => {
+          v.oncanplay = () => res(true);
+          v.onerror = () => rej(new Error(`movie failed: ${src}`));
+          v.src = src;
+          v.load();
+        }),
+      { timeoutMs: Effects.MOVIE_WAIT },
+    ).catch(() => false);
+    if (epoch !== this.clock.epoch) return this.stopMovie(); // stopped or jumped meanwhile
     if (ok) {
       v.classList.remove("hidden");
       await v.play().catch(() => ((v.muted = true), v.play().catch(() => {})));
       void this.colorFade([0, 0, 0, 0], 500);
-      const epoch = this.clock.epoch;
       await new Promise<void>((res) => {
         let tail = false;
         v.ontimeupdate = () => {

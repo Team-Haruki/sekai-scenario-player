@@ -5,6 +5,7 @@
 
 import * as PIXI from "pixi.js";
 import { absUrl as abs } from "./files";
+import { loadFrom } from "./hosts";
 import { fetchBuffer, fetchJson } from "./net";
 
 export const DEFAULT_CUBISM_CORE_URL = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
@@ -23,10 +24,17 @@ function loadScript(src: string) {
     const s = document.createElement("script");
     s.src = src;
     s.onload = () => resolve();
-    s.onerror = () => reject(new Error(`could not load Cubism Core from ${src}`));
+    s.onerror = () => {
+      s.remove();
+      reject(new Error(`could not load Cubism Core from ${src}`));
+    };
     document.head.appendChild(s);
   });
 }
+
+// from the URL's host, or its fallback when the host fails or stalls
+const SCRIPT_TIMEOUT = 20_000;
+const loadCore = (url: string) => loadFrom(url, loadScript, { timeoutMs: SCRIPT_TIMEOUT });
 
 // JSON fetched ahead for a model being loaded (its motions, facials and
 // physics, whose URLs are known before the model3 is): the library's loader
@@ -67,7 +75,7 @@ export function aheadJson<T>(url: string): Promise<T> {
 
 export function getLive2D(): Promise<Live2DModule> {
   return (loading ??= (async () => {
-    if (!(window as any).Live2DCubismCore) await loadScript(coreUrl);
+    if (!(window as any).Live2DCubismCore) await loadCore(coreUrl);
     const mod = await import("@sekai-world/pixi-live2d-display-mulmotion/cubism4");
     mod.Live2DModel.registerTicker(PIXI.Ticker);
     // in place of the XHR loader: JSON from what fetchAhead() has, then JSON

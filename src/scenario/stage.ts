@@ -21,7 +21,8 @@ import { modeScale, sideToFraction } from "./types";
 import { AMBIENT, EASE, HologramFilter, REF, ScenarioBlurFilter, makeBackground, makeShake } from "./camera";
 import type { Clock } from "./clock";
 import { withTimeout } from "./net";
-import { countLoad, fileUrl } from "./files";
+import { countLoad } from "./files";
+import { loadFrom, timeout } from "./hosts";
 
 // ScenarioStudioCamera.AttachEffect → SetColorEffect(monochrome, toneRatio,
 // influence) on the MonotoneColord camera material (constants from 6.8.1):
@@ -240,17 +241,24 @@ export class Stage {
   }
 
   // fromURL, not from(): from() starts the load itself and nothing catches its
-  // rejection, so each missing candidate was an unhandled "Event" error
+  // rejection, so each missing candidate was an unhandled "Event" error. A host
+  // that fails or stalls (5 s: don't hang the timeline on a bad bg) gives way
+  // to its fallback; a missing file moves on to the next candidate.
   private async loadTexture(url: string): Promise<PIXI.Texture | null> {
-    const src = fileUrl(url);
-    const load = countLoad(PIXI.Texture.fromURL(src, { resourceOptions: { crossorigin: true } }));
-    const tex = await withTimeout(load, 5000, null); // don't hang the timeline on a bad bg
-    // a failed texture stays in PIXI's cache: drop it so a later load retries
-    if (!tex) {
-      PIXI.Texture.removeFromCache(src);
-      PIXI.BaseTexture.removeFromCache(src);
+    try {
+      return await loadFrom(url, async (src) => {
+        try {
+          return await timeout(countLoad(PIXI.Texture.fromURL(src, { resourceOptions: { crossorigin: true } })), 5000);
+        } catch (e) {
+          // a failed texture stays in PIXI's cache: drop it so a later load retries
+          PIXI.Texture.removeFromCache(src);
+          PIXI.BaseTexture.removeFromCache(src);
+          throw e;
+        }
+      });
+    } catch {
+      return null;
     }
-    return tex;
   }
 
   private makeBg(tex: PIXI.Texture) {

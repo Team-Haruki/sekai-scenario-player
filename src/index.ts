@@ -1,7 +1,8 @@
 // pjsk-scenario-player — public API.
 
 export { DEFAULT_FONTS, PjskPlayer } from "./PjskPlayer";
-export type { HostProgress, LoadingProgress, PlayerEvents, PlayerModes, PlayerOptions, TextScript } from "./PjskPlayer";
+export type { HostProgress, LabelOverrides, LoadingProgress, PlayerEvents, PlayerModes, PlayerOptions, PreloadOptions, TextScript } from "./PjskPlayer";
+export type { PreloadFailure, PreloadProgress, PreloadResult } from "./scenario/preload";
 export type { FileCount, FileEntries } from "./scenario/files";
 export { DEFAULT_MENU, GAME_MENU } from "./scenario/menu";
 export type { MenuItem } from "./scenario/menu";

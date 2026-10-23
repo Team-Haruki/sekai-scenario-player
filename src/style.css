@@ -228,6 +228,7 @@
 @keyframes pjsk-start-pulse { 50% { transform: scale(1.04); } }
 .pjsk-status { font-size: 13px; color: #8b93a7; min-height: 18px; }
 .pjsk-status:empty { display: none; }
+.pjsk-status.pjsk-warn { font: 700 16px var(--pjsk-cjk-bold); color: rgb(223,223,234); letter-spacing: .06em; }
 /* loading: a spinning ring + the loading label */
 .pjsk-loading { display: flex; flex-direction: column; align-items: center; gap: 14px;
   font: 700 15px var(--pjsk-cjk-bold); color: rgb(223,223,234); letter-spacing: .1em; }
@@ -243,6 +244,15 @@
   animation: pjsk-spin .8s linear infinite; }
 @keyframes pjsk-spin { to { transform: rotate(360deg); } }
 .pjsk-overlay[hidden], .pjsk-start[hidden] { display: none; }
+/* after a preload with failed files: download them again, or play without them */
+.pjsk-actions { display: flex; gap: 16px; }
+.pjsk-actions[hidden] { display: none; }
+.pjsk-actions button { height: 48px; padding: 0 28px; cursor: pointer; border: 0; border-radius: 14px;
+  background: #fff; box-shadow: 0 3px 8px rgba(0,0,34,.35); color: rgb(68,68,102);
+  font: 700 17px var(--pjsk-cjk-bold); letter-spacing: .06em; }
+.pjsk-actions .pjsk-continue { background: rgba(255,255,255,.14); color: rgb(223,223,234); box-shadow: none; }
+.pjsk-actions button:hover { filter: brightness(1.04); }
+.pjsk-actions button:active { filter: brightness(.92); transform: scale(.98); }
 
 /* Text in other scripts (setTextScript): Chinese and Korean lines use these
    families (put host-registered faces first), with the clients' weights:

@@ -19,6 +19,8 @@ import { AssetResolver, ModelManifest, bindAssets, createAssetResolver } from ".
 import { UiSprites } from "./scenario/sprites";
 import { fetchJson } from "./scenario/net";
 import { type FileCount, type FileEntries, absUrl, countFiles, provide, unprovide } from "./scenario/files";
+import { fallbackOf, setFallback } from "./scenario/hosts";
+import { Preload, type PreloadProgress, type PreloadResult, collectItems, scenarioText } from "./scenario/preload";
 import { Stage } from "./scenario/stage";
 import type { ScenarioSceneData } from "./scenario/types";
 
@@ -37,7 +39,7 @@ export interface PlayerOptions {
   auto?: boolean;
   /** Language of the start overlay and story menu. Default "zh". */
   locale?: Locale;
-  labels?: { start?: string; loading?: string; models?: string; files?: string; menu?: Partial<MenuLabels> };
+  labels?: LabelOverrides;
   /**
    * The ⋯ story menu: `false` hides it, a list picks its buttons (GAME_MENU is
    * the game's own panel). Default DEFAULT_MENU: fullscreen, auto, mute, fast,
@@ -60,7 +62,21 @@ export interface PlayerOptions {
   cubismCoreUrl?: string;
   /** Canvas resolution. Default min(devicePixelRatio, 2). */
   resolution?: number;
+  /**
+   * Download every file a scenario uses before it plays (`load()` can
+   * override it per scenario). The bar shows the download; files no host
+   * gives are reported with a retry and a play-anyway button. Default false:
+   * only the first costumes and voice are waited for, the rest streams.
+   */
+  preload?: boolean | PreloadOptions;
 }
+
+export interface PreloadOptions {
+  /** Downloads at a time. Default 6. */
+  concurrency?: number;
+}
+
+export type LabelOverrides = Partial<Omit<PlayerLabels, "menu">> & { menu?: Partial<MenuLabels> };
 
 export interface PlayerEvents {
   /** A scenario was fetched and its stage built (models still loading). */
@@ -82,6 +98,10 @@ export interface PlayerEvents {
   mode: PlayerModes;
   /** The menu's Log (ログ) button was pressed. */
   log: Record<string, never>;
+  /** A preload (see `preload`) moved on: files done of those found so far, bytes received. */
+  preload: PreloadProgress;
+  /** A preload run finished: what loaded, what exists nowhere, what failed on every host. */
+  preloaded: PreloadResult;
 }
 type Listener<K extends keyof PlayerEvents> = (e: PlayerEvents[K]) => void;
 
@@ -196,6 +216,10 @@ export class PjskPlayer {
   private progress?: { costumes?: Omit<LoadingProgress, "files">; files: FileCount; stop: () => void; frame?: number };
   private hostProgress: HostProgress | null = null;
   private loadFiles?: object; // owns what load({ files }) handed in, until the next load
+  private sprites: UiSprites;
+  private actionsEl: HTMLElement;
+  private preloading?: { abort: AbortController; progress?: PreloadProgress };
+  private choice?: (c: "retry" | "continue" | "cancel") => void; // the retry / play-anyway buttons
 
   constructor(
     container: HTMLElement,
@@ -204,13 +228,10 @@ export class PjskPlayer {
     this.assets = typeof options.assets === "string" ? createAssetResolver(options.assets) : options.assets;
     if (options.cubismCoreUrl) setCubismCoreUrl(options.cubismCoreUrl);
     const base = LABELS[options.locale ?? "zh"];
-    this.labels = {
-      start: options.labels?.start ?? base.start,
-      loading: options.labels?.loading ?? base.loading,
-      models: options.labels?.models ?? base.models,
-      files: options.labels?.files ?? base.files,
-      menu: { ...base.menu, ...options.labels?.menu },
-    };
+    this.labels = mergeLabels(base, options.labels);
+    // every load asks the resolver for the fallback host's copy when a host fails
+    const fallback = this.assets.fallback;
+    setFallback(this, fallback && ((url: string) => fallback.call(this.assets, url)));
     this.modes = {
       auto: options.auto ?? true,
       fast: false,
@@ -225,15 +246,16 @@ export class PjskPlayer {
     if (options.fonts !== false) {
       const name = options.fonts?.name ?? this.assets.font(DEFAULT_FONTS.name);
       const body = options.fonts?.body ?? this.assets.font(DEFAULT_FONTS.body);
-      const face = (family: string, url: string) =>
-        `@font-face { font-family: "${family}"; src: url("${url}"); font-display: swap; }`;
+      // the fallback host's copy as a second source (the browser moves on when the first fails)
+      const src = (url: string) => [url, fallbackOf(url)].flatMap((u) => (u ? [`url("${u}")`] : [])).join(", ");
+      const face = (family: string, url: string) => `@font-face { font-family: "${family}"; src: ${src(url)}; font-display: swap; }`;
       injectStyle(`pjsk-font-${name}|${body}`, face("PJSK Sans Bold", name) + "\n" + face("PJSK Sans Medium", body));
     }
 
     this.root = document.createElement("div");
     this.root.className = "pjsk-player";
     this.root.dataset.script = options.textScript ?? "ja";
-    const sprites = new UiSprites(this.assets.ui);
+    const sprites = (this.sprites = new UiSprites(this.assets.ui));
     for (const p of CSS_IMAGES)
       sprites.bind(`${p}.png`, (url) => this.root.style.setProperty(`--pjsk-img-${p.replace(/[/_]/g, "-")}`, `url("${url}")`));
     this.stageEl = document.createElement("div");
@@ -278,14 +300,23 @@ export class PjskPlayer {
     this.overlay.hidden = true;
     this.overlay.innerHTML = `<div class="pjsk-loading"></div>
       <div class="pjsk-progress" hidden><i></i></div><div class="pjsk-progress-text"></div>
-      <div class="pjsk-status"></div><button class="pjsk-start" hidden></button>`;
+      <div class="pjsk-status"></div><button class="pjsk-start" hidden></button>
+      <div class="pjsk-actions" hidden><button class="pjsk-retry"></button><button class="pjsk-continue"></button></div>`;
     this.loadingEl = this.overlay.querySelector(".pjsk-loading")!;
     this.progressEl = this.overlay.querySelector(".pjsk-progress")!;
     this.progressText = this.overlay.querySelector(".pjsk-progress-text")!;
     this.statusEl = this.overlay.querySelector(".pjsk-status")!;
     this.startBtn = this.overlay.querySelector(".pjsk-start")!;
-    this.loadingEl.textContent = this.labels.loading;
-    this.startBtn.textContent = this.labels.start;
+    this.actionsEl = this.overlay.querySelector(".pjsk-actions")!;
+    this.syncLabels();
+    for (const [sel, c] of [
+      [".pjsk-retry", "retry"],
+      [".pjsk-continue", "continue"],
+    ] as const)
+      this.actionsEl.querySelector(sel)!.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.choose(c);
+      });
     this.startBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       void this.play();
@@ -440,17 +471,16 @@ export class PjskPlayer {
   }
 
   /** Change the start overlay and menu text. */
-  setLabels(labels: { start?: string; loading?: string; models?: string; files?: string; menu?: Partial<MenuLabels> }) {
-    this.labels = {
-      start: labels.start ?? this.labels.start,
-      loading: labels.loading ?? this.labels.loading,
-      models: labels.models ?? this.labels.models,
-      files: labels.files ?? this.labels.files,
-      menu: { ...this.labels.menu, ...labels.menu },
-    };
+  setLabels(labels: LabelOverrides) {
+    this.labels = mergeLabels(this.labels, labels);
+    this.syncLabels();
+    this.menu?.setLabels(this.labels.menu);
+  }
+  private syncLabels() {
     this.loadingEl.textContent = this.labels.loading;
     this.startBtn.textContent = this.labels.start;
-    this.menu?.setLabels(this.labels.menu);
+    this.actionsEl.querySelector(".pjsk-retry")!.textContent = this.labels.retry;
+    this.actionsEl.querySelector(".pjsk-continue")!.textContent = this.labels.continue;
   }
 
   /**
@@ -475,6 +505,8 @@ export class PjskPlayer {
     this.loadingEl.hidden = false;
     this.statusEl.textContent = "";
     this.startBtn.hidden = true;
+    this.actionsEl.hidden = true;
+    this.statusEl.classList.remove("pjsk-warn");
     this.showProgress();
   }
 
@@ -495,10 +527,15 @@ export class PjskPlayer {
     let ratio = 0;
     const parts: string[] = [];
     const hp = this.hostProgress;
+    const pre = this.preloading?.progress;
     if (hp) {
       ratio = hp.total > 0 ? hp.loaded / hp.total : 0;
       if (hp.label) parts.push(hp.label);
       if (hp.total > 0) parts.push(hp.bytes ? `${mb(hp.loaded)} / ${mb(hp.total)} MB` : `${hp.loaded} / ${hp.total}`);
+    } else if (pre) {
+      parts.push(`${this.labels.preloading} ${pre.done} / ${pre.total}`);
+      if (pre.bytes) parts.push(`${mb(pre.bytes)} MB`);
+      ratio = pre.total > 0 ? pre.done / pre.total : 0;
     } else if (this.progress) {
       const { costumes: c, files: f } = this.progress;
       if (c?.required) parts.push(`${this.labels.models} ${c.requiredLoaded} / ${c.required}`);
@@ -545,6 +582,8 @@ export class PjskPlayer {
     this.loadingEl.hidden = true;
     this.showProgress();
     this.startBtn.hidden = true;
+    this.actionsEl.hidden = true;
+    this.statusEl.classList.remove("pjsk-warn");
     this.statusEl.textContent = text;
   }
   hideOverlay() {
@@ -578,6 +617,8 @@ export class PjskPlayer {
       context?: unknown;
       /** Files for this scenario the host already has, as for provideFiles(); dropped at the next load. */
       files?: FileEntries;
+      /** Download every file before playing (the `preload` option, for this scenario). */
+      preload?: boolean;
     } = {},
   ): Promise<void> {
     const seq = ++this.loadSeq;
@@ -609,7 +650,22 @@ export class PjskPlayer {
     }
     if (seq !== this.loadSeq || this.destroyed) return; // another load() came in meanwhile
 
-    const assets = bindAssets(this.assets, { scenario: scn, data: opts.context });
+    const preloadOpt = opts.preload ?? !!this.options.preload;
+    const abort = new AbortController();
+    const pre = preloadOpt
+      ? new Preload({
+          signal: abort.signal,
+          concurrency: typeof this.options.preload === "object" ? this.options.preload.concurrency : undefined,
+          onProgress: (p) => {
+            if (this.preloading?.abort !== abort) return;
+            this.preloading.progress = p;
+            this.showProgress();
+            this.emit("preload", p);
+          },
+        })
+      : undefined;
+    // a preload finds which of an asset's candidates loads: that one is tried first
+    const assets = bindAssets(this.assets, { scenario: scn, data: opts.context }, pre?.chosen);
     const stage = new Stage(this.app, manifest, buildMotionIndex(scn), assets, this.clock);
     const player = new ScenarioPlayer(scn, stage, this.dialogue, this.audio, this.effects, assets, this.clock);
     const fx = new FxManager(
@@ -649,6 +705,13 @@ export class PjskPlayer {
     const session: Session = { scenario: scn, player, stage, fx, started: false };
     this.session = session;
     this.emit("load", { scenario: scn });
+
+    if (pre) {
+      player.waitForAll = true; // the files are here: every costume is ready before the first line
+      this.preloading = { abort };
+      const items = collectItems({ scenario: scn, manifest, assets, extra: this.sprites.urls(), tasks: this.fontLoads(scn) });
+      if (!(await this.runPreload(session, pre, items))) return;
+    }
 
     const autoplay = opts.autoplay ?? this.options.autoplay ?? "auto";
     if (autoplay === true || (autoplay === "auto" && (await canAutoplay()))) {
@@ -708,12 +771,71 @@ export class PjskPlayer {
     if (document.fullscreenElement === this.root) void document.exitFullscreen().catch(() => {});
     this.listeners.clear();
     unprovide(this);
+    setFallback(this);
     this.audio.destroy();
     this.app.destroy(false, { children: true });
     this.root.remove();
   }
 
   // ── internals ────────────────────────────────────────────────────────────
+  // Download everything; when files failed on every host, ask: retry them or
+  // play anyway. false: the scenario was replaced or stopped meanwhile.
+  private async runPreload(session: Session, pre: Preload, items: ReturnType<typeof collectItems>): Promise<boolean> {
+    const live = () => this.session === session && !this.destroyed;
+    let result = await pre.run(items);
+    for (;;) {
+      if (!live()) return false;
+      this.emit("preloaded", result);
+      if (!result.failed.length) break;
+      console.warn("preload: no host gave these files", result.failed);
+      const c = await new Promise<"retry" | "continue" | "cancel">((resolve) => {
+        this.choice = resolve;
+        this.showMessage(this.labels.preloadFailed.replace("{n}", String(result.failed.length)));
+        this.statusEl.classList.add("pjsk-warn");
+        this.actionsEl.hidden = false;
+      });
+      if (c === "cancel" || !live()) return false;
+      this.showLoading();
+      if (c === "continue") break;
+      result = await pre.retry();
+    }
+    this.preloading = undefined;
+    this.showProgress();
+    return true;
+  }
+
+  private choose(c: "retry" | "continue" | "cancel") {
+    const f = this.choice;
+    this.choice = undefined;
+    this.actionsEl.hidden = true;
+    f?.(c);
+  }
+
+  // The talk window's faces, loaded for this scenario's characters (a host's
+  // unicode-range slices load only for the text shown).
+  private fontLoads(scn: ScenarioSceneData): (() => Promise<unknown>)[] {
+    const fonts = document.fonts as FontFaceSet | undefined;
+    const text = scenarioText(scn);
+    if (!fonts?.load || !text) return [];
+    const script = this.root.dataset.script;
+    const cjk = script === "zh" || script === "ko";
+    const style = getComputedStyle(this.root);
+    const faces: [string, string, string][] = cjk
+      ? [
+          [`--pjsk-font-${script}-name`, "700", text],
+          [`--pjsk-font-${script}-body`, "500", text],
+          ["--pjsk-font-name", "400", "AUTO"], // the AUTO badge is always set in the name face
+        ]
+      : [
+          ["--pjsk-font-name", "400", text + "AUTO"],
+          ["--pjsk-font-body", "400", text],
+        ];
+    return faces.flatMap(([v, weight, sample]) => {
+      const family = style.getPropertyValue(v).trim();
+      return family ? [() => fonts.load(`${weight} 24px ${family}`, sample)] : [];
+    });
+  }
+
   private getManifest() {
     const m = this.options.models;
     this.manifest ??= (typeof m === "function" ? m() : m ? Promise.resolve(m) : fetchJson<ModelManifest>(this.assets.modelManifest())).catch(
@@ -726,6 +848,9 @@ export class PjskPlayer {
   }
 
   private teardown() {
+    this.preloading?.abort.abort();
+    this.preloading = undefined;
+    this.choose("cancel");
     this.stopCounting();
     if (this.loadFiles) unprovide(this.loadFiles);
     this.loadFiles = undefined;
@@ -754,4 +879,10 @@ export class PjskPlayer {
     // keep the spinner / start button / status readable on a small stage
     this.overlay.style.zoom = String(k < 0.6 ? Math.min(2.6, 0.6 / k) : 1);
   }
+}
+
+function mergeLabels(base: PlayerLabels, o: LabelOverrides | undefined): PlayerLabels {
+  const { menu, ...rest } = o ?? {};
+  const defined = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+  return { ...base, ...defined, menu: { ...base.menu, ...menu } };
 }

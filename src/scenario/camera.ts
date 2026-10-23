@@ -7,6 +7,7 @@
 // Units: "ref" = 1920x1080 canvas units (Unity, y-up); stage px = ref * 2/3 (y-down).
 
 import * as PIXI from "pixi.js";
+import { hostFailed, preferred, sources } from "./hosts";
 
 export const REF = 2 / 3; // ref unit → stage px
 
@@ -230,8 +231,26 @@ void main(){
 export class HologramFilter extends PIXI.Filter {
   private timer = Math.random() * 0.2 + 0.05;
   constructor(noiseUrl: string) {
-    const holoTex = PIXI.Texture.from(noiseUrl, { wrapMode: PIXI.WRAP_MODES.REPEAT } as any); // cached by URL
-    super(undefined, HOLO_FRAG, { uHolo: holoTex, uTime: 0, uLine: 0.86, uSubA: 0.7764706, uModel: [0, 0, 1, 1] });
+    super(undefined, HOLO_FRAG, { uHolo: HologramFilter.noise(noiseUrl), uTime: 0, uLine: 0.86, uSubA: 0.7764706, uModel: [0, 0, 1, 1] });
+  }
+  // a noise texture whose host failed → the fallback host's copy (update() swaps it in)
+  private static replaced = new Map<PIXI.Texture, PIXI.Texture>();
+  // The noise texture (cached by URL), from the host or, once it failed, its fallback.
+  private static noise(url: string): PIXI.Texture {
+    const opts = { wrapMode: PIXI.WRAP_MODES.REPEAT } as any;
+    const src = preferred(url);
+    const tex = PIXI.Texture.from(src, opts);
+    if (!tex.baseTexture.valid)
+      tex.baseTexture.once("error", () => {
+        PIXI.Texture.removeFromCache(src);
+        PIXI.BaseTexture.removeFromCache(src);
+        const alt = sources(url).find((s) => s !== src);
+        if (!alt) return;
+        void hostFailed(src).then((failed) => {
+          if (failed) HologramFilter.replaced.set(tex, PIXI.Texture.from(alt, opts));
+        });
+      });
+    return tex;
   }
   // model rect in screen px (uv1 spans the model; height used for both axes)
   setModelRect(x: number, y: number, h: number) {
@@ -239,6 +258,8 @@ export class HologramFilter extends PIXI.Filter {
   }
   // per frame (Live2DHologramController.Update): re-roll the flicker
   update(dt: number) {
+    const swap = HologramFilter.replaced.get(this.uniforms.uHolo);
+    if (swap) this.uniforms.uHolo = swap;
     this.uniforms.uTime += dt;
     if (Math.random() * 10000 < 150 || this.timer <= 0) {
       this.uniforms.uLine = 0.6 + Math.random() * 0.2;

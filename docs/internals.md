@@ -12,6 +12,10 @@ src/
 └─ scenario/
    ├─ types.ts           ScenarioSceneData types, game enums, side positions
    ├─ resolver.ts        asset URL rules (AssetResolver)
+   ├─ files.ts           handed-in files and the load count
+   ├─ hosts.ts           fallback hosts: which host a file loads from, failure rules, HEAD probes
+   ├─ net.ts             fetches with timeouts and retries (through hosts.ts)
+   ├─ preload.ts         preload: every file a scenario uses, downloaded into the HTTP cache
    ├─ live2d.ts          loads Cubism Core and the Live2D plugin on demand
    ├─ assets.ts          CharacterModel: Live2D loading, lip-sync, eye blink, breath, held facials
    ├─ stage.ts           background and character positions, appear / move / shake, camera
