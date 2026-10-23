@@ -103,6 +103,8 @@ function mount() {
     voice: voice.value,
     // the Log button opens the transcript, which the player-only view doesn't have
     menu: playerOnly ? DEFAULT_MENU.filter((i) => i !== "log") : DEFAULT_MENU,
+    // ?preload: download every file of an episode before it plays
+    preload: new URLSearchParams(location.search).has("preload"),
   });
   p.on("load", (e) => {
     scenario.value = e.scenario;

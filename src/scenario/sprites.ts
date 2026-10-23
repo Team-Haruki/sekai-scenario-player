@@ -5,6 +5,7 @@
 // black-on-transparent: only their alpha matters.
 
 import { fileUrl } from "./files";
+import { loadFrom, preferred } from "./hosts";
 
 const svg = (w: number, h: number, body: string) =>
   "data:image/svg+xml," +
@@ -65,27 +66,44 @@ const FALLBACKS: Record<string, string> = {
 };
 
 export class UiSprites {
-  private probes = new Map<string, Promise<boolean>>();
+  private probes = new Map<string, Promise<string | null>>();
+  private bound = new Set<string>();
 
   constructor(private resolve: (path: string) => string) {}
 
-  // apply(url) with the game sprite now, and again with the stand-in if it fails to load
-  bind(path: string, apply: (url: string) => void) {
-    const url = fileUrl(this.resolve(path));
-    apply(url);
-    const fallback = FALLBACKS[path];
-    if (fallback) void this.probe(url).then((ok) => ok || apply(fallback));
+  /** The URLs of every sprite bound so far (for a preload). */
+  urls(): string[] {
+    return [...this.bound].map((p) => this.resolve(p));
   }
 
+  // apply(url) with the game sprite now; again with the fallback host's copy
+  // when this host fails, or with the stand-in when no host has it
+  bind(path: string, apply: (url: string) => void) {
+    this.bound.add(path);
+    const url = this.resolve(path);
+    const first = fileUrl(preferred(url));
+    apply(first);
+    void this.probe(url).then((src) => {
+      if (src && src !== first) apply(src);
+      else if (!src && FALLBACKS[path]) apply(FALLBACKS[path]);
+    });
+  }
+
+  // the source that loads (sources() order), or null
   private probe(url: string) {
     let p = this.probes.get(url);
     if (!p) {
-      p = new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img.naturalWidth > 0);
-        img.onerror = () => resolve(false);
-        img.src = url;
-      });
+      p = loadFrom(
+        url,
+        (src) =>
+          new Promise<string>((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => (img.naturalWidth > 0 ? resolve(src) : reject(new Error("empty image")));
+            img.onerror = () => reject(new Error(`could not load ${src}`));
+            img.src = src;
+          }),
+        { timeoutMs: 15_000 },
+      ).catch(() => null);
       this.probes.set(url, p);
     }
     return p;

@@ -16,7 +16,9 @@
 // ForceStop = removed at once.
 
 import * as PIXI from "pixi.js";
-import { fileFetch, fileUrl } from "./files";
+import { fileUrl } from "./files";
+import { loadFrom, preferred } from "./hosts";
+import { HttpError, fetchJson } from "./net";
 
 const K = 2 / 3; // ref → stage px
 const UNIT = 540; // ref px per world unit (UIParticle prefabs override via effect.json "unit")
@@ -773,10 +775,44 @@ function loadTex(url: string, premultiplied: boolean) {
   const key = url + (premultiplied ? "#pm" : "#npm");
   let t = texCache.get(key);
   if (!t) {
-    t = PIXI.Texture.from(fileUrl(url), { alphaMode: premultiplied ? PIXI.ALPHA_MODES.PMA : PIXI.ALPHA_MODES.NPM } as any);
+    t = PIXI.Texture.from(fileUrl(preferred(url)), { alphaMode: premultiplied ? PIXI.ALPHA_MODES.PMA : PIXI.ALPHA_MODES.NPM } as any);
     texCache.set(key, t);
   }
   return t;
+}
+
+/** The texture files an effect draws with, relative to its folder. */
+export function fxTextureFiles(data: { nodes: FxNode[]; materials: Record<string, Json>; sprites: Record<string, Json> }): string[] {
+  const files = new Set<string>();
+  for (const n of data.nodes) {
+    if (n.ps) {
+      const file = data.materials[n.psr?.materials?.[0]]?.tex?._MainTex?.file;
+      if (file) files.add(file);
+    }
+    const key = n.image?.sprite ?? n.sprite?.sprite;
+    const tex = key ? data.sprites[key]?.tex : undefined;
+    if (tex) files.add(tex);
+  }
+  return [...files];
+}
+
+// Load an effect's textures before it is built (the build takes them
+// synchronously), each from the host or its fallback; one that fails is left
+// to the build's own load.
+async function loadFxTextures(base: string, data: FxData) {
+  await Promise.all(
+    fxTextureFiles(data).map(async (file) => {
+      const url = `${base}/${file}`;
+      const key = url + "#npm";
+      if (texCache.has(key)) return;
+      try {
+        const t = await loadFrom(url, (src) => PIXI.Texture.fromURL(src, { alphaMode: PIXI.ALPHA_MODES.NPM } as any), { timeoutMs: 15_000 });
+        texCache.set(key, t);
+      } catch {
+        /* the build loads it itself */
+      }
+    }),
+  );
 }
 
 export class FxInstance {
@@ -1123,9 +1159,13 @@ export class FxManager {
   private load(name: string) {
     let p = this.cache.get(name);
     if (!p) {
-      p = fileFetch(this.url(`${name}/effect.json`))
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
+      const base = this.url(name);
+      p = fetchJson<FxData>(this.url(`${name}/effect.json`))
+        .then(async (data) => (await loadFxTextures(base, data), data))
+        .catch((e: unknown) => {
+          if (!(e instanceof HttpError)) this.cache.delete(name); // the host failed: a later play tries again
+          return null;
+        });
       this.cache.set(name, p);
     }
     return p;
@@ -1171,10 +1211,12 @@ export class FxManager {
     if (id === this.bgId) return;
     this.bgId = id;
     for (const l of this.live) if (l.name === BG_KEY) l.fx.forceStop();
-    this.bgIndex ??= fileFetch(this.url("bg/index.json"))
-      .then((r) => (r.ok ? r.json() : []))
-      .catch(() => [])
-      .then((ids: string[]) => new Set(ids));
+    this.bgIndex ??= fetchJson<string[]>(this.url("bg/index.json"))
+      .catch((e: unknown) => {
+        if (!(e instanceof HttpError)) this.bgIndex = undefined; // the host failed: the next background asks again
+        return [] as string[];
+      })
+      .then((ids) => new Set(ids));
     void this.bgIndex.then(async (ids) => {
       if (!ids.has(id) || this.bgId !== id) return;
       const fx = await this.play(`bg/${id}`, undefined, BG_KEY, into);

@@ -71,7 +71,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `autoplay` | `boolean \| "auto"` | `"auto"` | Start playing once loaded. `"auto"` does so when the browser allows sound without a click and shows the start button otherwise; `false` always shows the button |
 | `auto` | `boolean` | `true` | Auto-advance lines (the menu's Auto) |
 | `locale` | `"zh" \| "ja" \| "en"` | `"zh"` | Language of the start overlay and the menu (`ja` is the game's own text) |
-| `labels` | `{ start?, loading?, models?, files?, menu? }` | — | Override individual strings (`models` and `files` prefix the loading counts) |
+| `labels` | `{ start?, loading?, models?, files?, preloading?, preloadFailed?, retry?, continue?, menu? }` | — | Override individual strings (`models`, `files` and `preloading` prefix the loading counts; `preloadFailed` puts the number of failed files in for `{n}`) |
 | `menu` | `boolean \| MenuItem[]` | `DEFAULT_MENU` | The ⋯ story menu: `false` hides it, a list picks its buttons. `DEFAULT_MENU` is fullscreen, auto, mute, fast, hide, log; `GAME_MENU` is the game's own panel (bookmark, consecutive and skip only look like the game) |
 | `muted` | `boolean` | `false` | Start muted |
 | `voice` | `boolean` | `true` | Play the voices |
@@ -79,12 +79,13 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `fonts` | `false \| { name?, body? }` | Source Han Sans Bold / Medium from `<assets>/fonts/` | Talk window font URLs: `name` for the name plate, `body` for lines. `false` registers none and uses system fonts |
 | `cubismCoreUrl` | `string` | Live2D's CDN | Where to load Cubism Core from if the page hasn't |
 | `resolution` | `number` | `min(devicePixelRatio, 2)` | Canvas resolution |
+| `preload` | `boolean \| { concurrency? }` | `false` | Download every file of a scenario before it plays (see [Preload](#preload)); `concurrency` is the downloads at a time (6) |
 
 ### Methods
 
 | Method | Description |
 |---|---|
-| `load(scenario, { autoplay?, context?, files? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). `context` reaches every per-episode resolver call as `ctx.data`. `files` are this scenario's files the host already has (see [Handing files in](#handing-files-in)), dropped at the next load. Resolves once playback starts or the start button shows |
+| `load(scenario, { autoplay?, context?, files? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). `context` reaches every per-episode resolver call as `ctx.data`. `files` are this scenario's files the host already has (see [Handing files in](#handing-files-in)), dropped at the next load. `preload` overrides the option for this scenario. Resolves once playback starts or the start button shows |
 | `play()` | Start the loaded scenario. Call it from a user gesture when the browser blocked autoplay |
 | `jumpTo(index)` | Restart at snippet `index`, with the stage rebuilt as it was at that point |
 | `advance()` | Same as tapping the stage: finish typing, or advance a line waiting for input |
@@ -94,7 +95,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `setVoice(on)` | Play the voices or not; without them lines advance on the no-voice timing. Takes effect from the next line |
 | `setFullscreen(on)` / `toggleFullscreen()` | Fullscreen on the player, locked to landscape where the browser allows. Where pages can't go fullscreen (iPhone Safari) the player covers the viewport instead, turned sideways while the phone is held upright; Escape leaves it |
 | `setTextScript(script)` | The script of the text being shown. `"zh"` / `"ko"` switch the talk window, telops and captions to the `--pjsk-font-zh-*` / `--pjsk-font-ko-*` families with bold names and medium lines |
-| `setLabels({ start?, loading?, models?, files?, menu? })` | Change the start overlay and menu text |
+| `setLabels({ start?, loading?, models?, files?, preloading?, preloadFailed?, retry?, continue?, menu? })` | Change the start overlay and menu text |
 | `showLoading()` / `showMessage(text)` / `hideOverlay()` | Drive the overlay over the stage while the host prepares something itself, or to show its own error |
 | `setProgress({ loaded, total, label?, bytes? } \| null)` | Drive the loading bar yourself (after `showLoading()`), e.g. while you download files to hand in. `bytes: true` shows the numbers in MB. `null`, or the next `load()`, gives the bar back to the player |
 | `provideFiles(files)` / `clearFiles(urls?)` | Hand in files the host already has, or forget them (all when `urls` is omitted); see [Handing files in](#handing-files-in) |
@@ -116,6 +117,8 @@ Read-only properties: `scenario`, `auto`, `fast`, `uiHidden`, `muted`, `voice`, 
 | `error` | `{ error }` | The scenario or the model manifest failed to load |
 | `mode` | `{ auto, fast, uiHidden, muted, voice, fullscreen }` | A mode changed (from the menu, a tap or the API) |
 | `log` | `{}` | The menu's Log button was pressed |
+| `preload` | `{ done, total, bytes, failed }` | A [preload](#preload) moved on: files settled of those found so far (`total` grows while model3s and effects name more), bytes received, files that failed on every host |
+| `preloaded` | `{ loaded, bytes, missing, failed }` | A preload run finished. `missing` lists files no candidate has (4xx; skipped as usual), `failed` the ones no host gave, as `{ url, error }` |
 
 ### Size
 
@@ -134,10 +137,35 @@ The player doesn't wait for every model before it starts.
 - **What it waits for:** the costumes on stage before the third line of dialogue, and the first line's voice (5 s at most). Under the spinner the bar follows those costumes, and the text counts them, the files loaded of those asked for, and the MB so far.
 - **The rest** load while the episode plays, three at a time.
 - **Time limits and retries:** nothing waits forever.
-  - JSON fetches (scenario, manifest, model3, motions, facials, physics) time out after 15 s, a model's moc and textures after 60 s; each is retried twice (network errors and 5xx).
+  - JSON fetches (scenario, manifest, model3, motions, facials, physics) time out after 15 s, a model's moc and textures after 60 s, voices and SEs after 8 s; each is retried twice (network errors, timeouts, 5xx and bodies cut short), on the resolver's [fallback host](#fallback-host) first when it names one.
   - A costume that fails to load is retried once.
   - A costume that takes longer than 30 s is given up on. It is still used if it arrives later.
   - An appearance waits at most 12 s for a costume that is still loading. Otherwise that appearance is skipped and the timeline carries on.
+
+## Preload
+
+With `preload: true` (or `load(…, { preload: true })`) the player downloads every file the scenario can use before it plays: the model3, moc, textures and physics of every costume, the motions and facials its lines name, every voice, BGM and SE, the backgrounds and background effects, movies, scenario effects and their textures, the UI sprites and the talk window's font faces (only the slices its text needs). The bar shows `downloaded / total · MB`; `total` grows a little at the start as the model3s and effects name their files. Playback then waits for every costume, not only the first ones.
+
+- **Memory.** The files aren't kept in memory: each body is read to its end into one reused buffer and dropped, which leaves it in the browser's HTTP cache, and the player's own loads read it from there. Measured in Chrome: an area talk is about 7 MB in 40 files, a 27-character event finale about 170 MB in 510 files and a unit story with its opening movie about 90 MB in 280 files; the finale's preload raised the page's JS heap by about 25 MB of short-lived garbage, and 393 of the 395 loads after it came from the cache (the exceptions: a BGM stream and one UI sprite). Holding those files as Blobs would add their whole size on top of the decoded models, too much for a phone. The asset host must send cacheable responses (`Cache-Control: max-age=…`); a file the cache drops is simply downloaded again.
+- **Failures.** Every file goes through its candidates and, when the host fails, its [fallback host](#fallback-host). A file that exists nowhere (4xx on every candidate) is skipped, as it would be anyway, and isn't asked for again. Files that no host gave are reported with a **Retry** button (downloads them again) and a **Play anyway** button (`retry` / `continue` labels).
+- **Cancelling.** The next `load()`, `stop()` and `destroy()` abort the downloads in flight.
+- Font faces are best effort (20 s at most): the browser loads them from their `src` lists itself.
+
+## Fallback host
+
+`fallback(url)` on the resolver names the same file on another host. Every load goes through it, including the files a model3 or an effect names next to it, UI sprites, fonts and the Cubism Core script:
+
+- A network error, a timeout, a 5xx or a body cut short moves the load to the fallback. A 4xx is an answer: the file is missing, and the fallback isn't asked.
+- Elements (backgrounds, BGM, movies, UI sprites, scripts) don't tell why they failed, so a failure is checked with a `HEAD` request; a font face lists the fallback as its second `src`, which the browser walks on any failure.
+- A host that failed is tried after its fallback for 60 s, so an outage costs one timeout rather than one per file; a file served from the fallback is loaded from there for the rest of the page's life.
+- The fallbacks of every player on a page are asked in turn: each resolver answers only for its own hosts.
+
+```ts
+const assets = createAssetResolver("https://primary.example/pjsk/", {
+  fallback: (url) => (url.startsWith("https://primary.example/") ? url.replace("https://primary.example/", "https://backup.example/") : null),
+});
+createPlayer(el, { assets, preload: true });
+```
 
 ## Handing files in
 
@@ -182,6 +210,7 @@ Members and what they return:
 | `motion(entry, kind, name, ctx)` | a motion3 URL, or `null` when the costume has no such clip (it is skipped) |
 | `bgm(id, ctx)`, `se(id, ctx)`, `voice(scenarioId, voiceId, ctx, info)`, `background(id, ctx)` | `AssetUrls`: one URL, or candidate URLs tried in order until one loads; `null` / `[]` skips the asset. `info.character2dId` is the speaker of a voice (absent for full-screen text), for trees that file voices by character |
 | `movie(name, ctx)` | a URL, or `null` to skip the movie |
+| `fallback?(url)` | optional: the same file on another host, tried when `url`'s host fails (see [Fallback host](#fallback-host)); `null` / `undefined` for none |
 
 `ctx` is the episode being loaded, `{ scenario, data }`, where `data` is the `context` passed to `load()`. That lets a resolver depend on the episode, for example look in different folders for card stories:
 

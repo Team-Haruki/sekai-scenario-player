@@ -63,6 +63,13 @@ export interface AssetResolver {
   ui(path: string): string;
   /** Font files (DEFAULT_FONTS: SourceHanSansJP-Bold.otf / -Medium.otf). */
   font(file: string): string;
+  /**
+   * The same file on another host, for any URL this resolver gave (or one a
+   * model3 or an effect names next to it); `null` / `undefined` when there is
+   * none. A load moves to it when the host fails: a network error, a timeout,
+   * a 5xx or a body cut short. A 4xx is an answer and never moves on.
+   */
+  fallback?(url: string): string | null | undefined;
 }
 
 const enc = encodeURIComponent;
@@ -102,15 +109,29 @@ export interface EpisodeAssets {
   ui(path: string): string;
 }
 
-export function bindAssets(r: AssetResolver, ctx: LoadContext): EpisodeAssets {
+/** The key of a candidate list in `chosen` (bindAssets). */
+export const candidatesKey = (urls: readonly string[]) => urls.join("\n");
+
+/**
+ * `chosen` maps a candidate list (candidatesKey) to the candidate known to
+ * load, tried first, or to null when every candidate answered 4xx (a preload
+ * found out): the asset is skipped instead of asked for again.
+ */
+export function bindAssets(r: AssetResolver, ctx: LoadContext, chosen?: ReadonlyMap<string, string | null>): EpisodeAssets {
+  const pick = (u: AssetUrls) => {
+    const urls = list(u);
+    const hit = urls.length && chosen ? chosen.get(candidatesKey(urls)) : undefined;
+    if (hit === null) return [];
+    return hit ? [hit, ...urls.filter((x) => x !== hit)] : urls;
+  };
   return {
     model: (m) => r.model(m, ctx),
     physics: (m) => r.physics?.(m, ctx),
     motion: (m, kind, name) => r.motion(m, kind, name, ctx),
-    bgm: (id) => list(r.bgm(id, ctx)),
-    se: (id) => list(r.se(id, ctx)),
-    voice: (s, v, info = {}) => list(r.voice(s, v, ctx, info)),
-    background: (id) => list(r.background(id, ctx)),
+    bgm: (id) => pick(r.bgm(id, ctx)),
+    se: (id) => pick(r.se(id, ctx)),
+    voice: (s, v, info = {}) => pick(r.voice(s, v, ctx, info)),
+    background: (id) => pick(r.background(id, ctx)),
     movie: (name) => r.movie(name, ctx),
     fx: (p) => r.fx(p),
     ui: (p) => r.ui(p),

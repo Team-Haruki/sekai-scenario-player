@@ -236,12 +236,14 @@ export class ScenarioPlayer {
     if (gen === this.gen) this.finished?.();
   }
 
+  /** Wait for every costume before playing, not just the first ones (the files are preloaded). */
+  waitForAll = false;
+
   // Load every costume (run() awaits this too; call early to load before play).
   preload() {
     this.prefetchAhead(0);
-    return (this.preloading ??= this.stage.preloadAll(this.scn.AppearCharacters, earlyCostumes(this.scn), (p) =>
-      this.onLoadProgress?.(p),
-    ));
+    const first = this.waitForAll ? new Set(this.scn.AppearCharacters.map((c) => c.CostumeType)) : earlyCostumes(this.scn);
+    return (this.preloading ??= this.stage.preloadAll(this.scn.AppearCharacters, first, (p) => this.onLoadProgress?.(p)));
   }
 
   private firstVoice(): Promise<void> {

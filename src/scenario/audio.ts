@@ -13,27 +13,31 @@
 // from <audio> elements, the voice with a synthetic lip-sync level. BGM
 // always streams from one of two primed elements (two for the crossfade).
 
-import { withTimeout } from "./net";
-import { fileFetch, fileUrl } from "./files";
+import { HttpError, fetchBlob, withTimeout } from "./net";
+import { fileUrl } from "./files";
+import { hostFailed, markDown, markServed, sources } from "./hosts";
 
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-const FETCH_TIMEOUT = 15_000;
+// per attempt: a clip is at most a few hundred KB, and a stalled host must
+// give way to its fallback while the line still waits for its voice (VOICE_WAIT)
+const FETCH_TIMEOUT = 8_000;
+const TRACK_STALL = 12_000; // an <audio> source that can't play by then: its host is failing
 const CLIP_CACHE = 32; // clips kept (a few seconds of decoded mono each)
 const VOICE_WAIT = 10_000; // a voice not loaded by then is skipped
 const SE_LATE = 3_000; // an SE that loads later than this no longer fits its moment
 const GESTURES = ["touchend", "pointerup", "click", "keydown"] as const;
 
-/** The first candidate that answers, as a Blob (a dropped connection is retried once); null when none does. */
+/**
+ * The first candidate that answers, as a Blob; null when none does. A
+ * candidate whose host fails (network, timeout, 5xx, cut short) is tried
+ * again, on the fallback host when there is one; a 4xx moves to the next.
+ */
 async function fetchFirst(urls: string[]): Promise<Blob | null> {
   for (const url of urls)
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const r = await fileFetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT) });
-        if (r.ok) return await r.blob();
-        if (r.status < 500) break; // not in this folder: the next candidate
-      } catch {
-        /* network error or timeout: once more */
-      }
+    try {
+      return await fetchBlob(url, { timeoutMs: FETCH_TIMEOUT, retries: 1 });
+    } catch (e) {
+      if (!(e instanceof HttpError)) console.warn("clip failed", url, (e as Error).message);
     }
   return null;
 }
@@ -48,7 +52,11 @@ interface Clip {
 class Track {
   readonly el = new Audio();
   private urls: string[] = [];
-  private i = 0;
+  private i = 0; // the candidate playing
+  private src: string[] = []; // its sources (sources()): the host, then its fallback
+  private j = 0; // the source playing
+  private loads = 0; // bumped by every load(): a probe that answers late is ignored
+  private stall?: ReturnType<typeof setTimeout>;
   private failed?: () => void;
   private primed = false;
   /** play() was asked for: unlock() retries it after a refusal. */
@@ -57,26 +65,66 @@ class Track {
 
   constructor() {
     this.el.crossOrigin = "anonymous";
-    this.el.addEventListener("error", () => {
-      if (!this.urls.length) return; // stopped, or the priming clip
-      if (++this.i < this.urls.length) {
-        this.el.src = fileUrl(this.urls[this.i]);
-        if (this.wanted) void this.play();
-      } else {
-        const f = this.failed;
-        this.stop();
-        f?.();
-      }
+    this.el.addEventListener("error", () => void this.onError());
+    this.el.addEventListener("canplay", () => {
+      clearTimeout(this.stall);
+      if (this.urls.length && this.src[this.j]) markServed(this.urls[this.i], this.src[this.j]);
     });
     this.el.addEventListener("ended", () => this.onEnded?.());
   }
 
+  // Load the current source; one that can't play within TRACK_STALL counts as its host failing.
+  private setSrc() {
+    clearTimeout(this.stall);
+    const load = this.loads;
+    const src = this.src[this.j];
+    this.el.src = fileUrl(src);
+    if (/^(blob|data):/.test(src)) return;
+    this.stall = setTimeout(() => {
+      if (load !== this.loads || this.el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return;
+      if (this.j + 1 < this.src.length) {
+        markDown(src);
+        this.j++;
+        this.setSrc();
+        if (this.wanted) void this.play();
+      }
+    }, TRACK_STALL);
+  }
+
+  // The source failed: its fallback when the host is failing (not when the
+  // file is missing), otherwise the next candidate, otherwise give up.
+  private async onError() {
+    if (!this.urls.length) return; // stopped, or the priming clip
+    clearTimeout(this.stall);
+    const load = this.loads;
+    const failedSrc = this.src[this.j];
+    if (this.j + 1 < this.src.length && (await hostFailed(failedSrc))) {
+      if (load !== this.loads) return;
+      this.j++;
+    } else {
+      if (load !== this.loads) return;
+      if (++this.i >= this.urls.length) {
+        const f = this.failed;
+        this.stop();
+        f?.();
+        return;
+      }
+      this.src = sources(this.urls[this.i]);
+      this.j = 0;
+    }
+    this.setSrc();
+    if (this.wanted) void this.play();
+  }
+
   load(urls: string[], failed?: () => void) {
+    this.loads++;
     this.urls = urls;
     this.i = 0;
+    this.src = urls.length ? sources(urls[0]) : [];
+    this.j = 0;
     this.failed = failed;
     this.wanted = false;
-    if (urls.length) this.el.src = fileUrl(urls[0]);
+    if (urls.length) this.setSrc();
     else queueMicrotask(() => failed?.());
   }
 
@@ -90,6 +138,8 @@ class Track {
   }
 
   stop() {
+    this.loads++;
+    clearTimeout(this.stall);
     this.urls = [];
     this.wanted = false;
     this.onEnded = undefined;

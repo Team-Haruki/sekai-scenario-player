@@ -18,6 +18,14 @@ export interface PlayerLabels {
   models: string;
   /** before the files' "loaded / asked for" count */
   files: string;
+  /** before the preload's "downloaded / total" count */
+  preloading: string;
+  /** after a preload, when files failed on every host; `{n}` is their number */
+  preloadFailed: string;
+  /** download the failed files again */
+  retry: string;
+  /** play without them */
+  continue: string;
   menu: MenuLabels;
 }
 
@@ -29,6 +37,10 @@ export const LABELS: Record<Locale, PlayerLabels> = {
     loading: "加载中",
     models: "角色",
     files: "文件",
+    preloading: "下载素材",
+    preloadFailed: "{n} 个文件下载失败",
+    retry: "重试",
+    continue: "仍然播放",
     menu: { bookmark: "书签", auto: "自动", consecutive: "连续播放", skip: "跳过", fast: "快进", hide: "隐藏", log: "记录", mute: "静音", fullscreen: "全屏" },
   },
   // the game's own labels (ScenarioMenu)
@@ -37,6 +49,10 @@ export const LABELS: Record<Locale, PlayerLabels> = {
     loading: "読み込み中",
     models: "キャラクター",
     files: "ファイル",
+    preloadFailed: "{n} 個のファイルを読み込めませんでした",
+    preloading: "ダウンロード中",
+    retry: "再試行",
+    continue: "このまま再生",
     menu: { bookmark: "しおり", auto: "オート", consecutive: "連続再生", skip: "スキップ", fast: "早送り", hide: "非表示", log: "ログ", mute: "ミュート", fullscreen: "全画面" },
   },
   en: {
@@ -44,6 +60,10 @@ export const LABELS: Record<Locale, PlayerLabels> = {
     loading: "Loading",
     models: "Characters",
     files: "Files",
+    preloading: "Downloading",
+    preloadFailed: "{n} files failed to download",
+    retry: "Retry",
+    continue: "Play anyway",
     menu: { bookmark: "Mark", auto: "Auto", consecutive: "Chain", skip: "Skip", fast: "Fast", hide: "Hide", log: "Log", mute: "Mute", fullscreen: "Full" },
   },
 };
