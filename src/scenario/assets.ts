@@ -21,7 +21,7 @@ export function buildMotionIndex(scn: ScenarioSceneData): MotionIndex {
     if (!m.has(id)) m.set(id, new Set());
     m.get(id)!.add(v);
   };
-  for (const l of scn.LayoutData) {
+  for (const l of [...(scn.FirstLayout || []), ...scn.LayoutData]) {
     add(motions, l.Character2dId, l.MotionName);
     add(facials, l.Character2dId, l.FacialName);
   }
