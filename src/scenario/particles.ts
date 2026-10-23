@@ -964,7 +964,8 @@ export class FxInstance {
     let len = 0;
     for (const em of this.emitters.values()) {
       const top = (m?: MinMax) => (m ? Math.max(m.s ?? 0, m.n ?? 0) : 0);
-      len = Math.max(len, top(em.ps.startDelay) + em.duration + top(em.ps.InitialModule?.startLifetime));
+      const run = top(em.ps.startDelay) + em.duration + top(em.ps.InitialModule?.startLifetime);
+      len = Math.max(len, run / (em.ps.simulationSpeed || 1)); // step() runs at simulationSpeed
     }
     for (const c of Object.values(this.data.clips)) len += c.len || 0;
     for (let t = 0; t < Math.min(len, SETTLE_MAX) && this.state !== "dead"; t += SETTLE_STEP) this.simulate(SETTLE_STEP);
