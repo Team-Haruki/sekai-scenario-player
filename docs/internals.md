@@ -61,7 +61,7 @@ The game runs all snippets **in parallel**, not one awaited after another. Resto
 
 Keep this model when changing handlers. Every wait and tween must go through `clock.ts` (`sleep` / `tween` / `playClip`); otherwise fast-forward doesn't speed it up and old coroutines keep changing the stage after a jump. Before changing the stage across an `await`, check `clock.epoch` (stage) or `gen` (player).
 
-**Jump** (`jumpTo`): bump the clock epoch so old coroutines are dropped, replay the state of snippets `[0, target)` to rebuild the stage (background, BGM, layout mode, fades, who stands where, motions / facials, effects), then continue from the target.
+**Jump** (`jumpTo`): bump the clock epoch so old coroutines are dropped, replay the state of snippets `[0, target)` to rebuild the stage (background, BGM, layout mode, fades, who stands where, motions / facials, effects), then continue from the target. Scenario effects still playing at the target are restarted and run on unseen for as long as a first run takes (at most 10 s), so a one-shot that was never stopped doesn't flash again and a loop is already under way.
 
 **Fast-forward** (早送り): text appears at once, no voice, each line holds 0.5 s, and every other wait, fade and move runs at `FAST_SCALE`.
 
