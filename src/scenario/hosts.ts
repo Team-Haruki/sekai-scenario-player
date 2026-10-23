@@ -134,7 +134,7 @@ export function retryable(e: unknown): boolean {
  * isn't readable cross-origin, so a decoded body may also be longer).
  */
 export function isCutShort(got: number, contentLength: string | null): number | null {
-  const expected = contentLength == null ? NaN : Number(contentLength);
+  const expected = contentLength == null ? Number.NaN : Number(contentLength);
   if (!Number.isFinite(expected) || expected <= 0) return null;
   return got < expected - 64 - expected / 1000 ? expected : null;
 }

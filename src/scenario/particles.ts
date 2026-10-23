@@ -17,7 +17,7 @@
 
 import * as PIXI from "pixi.js";
 import { fileUrl } from "./files";
-import { loadFrom, preferred } from "./hosts";
+import { loadFrom, preferred, timeout } from "./hosts";
 import { HttpError, fetchJson } from "./net";
 
 const K = 2 / 3; // ref → stage px
@@ -806,7 +806,16 @@ async function loadFxTextures(base: string, data: FxData) {
       const key = url + "#npm";
       if (texCache.has(key)) return;
       try {
-        const t = await loadFrom(url, (src) => PIXI.Texture.fromURL(src, { alphaMode: PIXI.ALPHA_MODES.NPM } as any), { timeoutMs: 15_000 });
+        const t = await loadFrom(url, async (src) => {
+          try {
+            return await timeout(PIXI.Texture.fromURL(src, { alphaMode: PIXI.ALPHA_MODES.NPM } as any), 15_000);
+          } catch (e) {
+            // a failed texture stays in PIXI's cache: drop it so a later attempt loads again
+            PIXI.Texture.removeFromCache(src);
+            PIXI.BaseTexture.removeFromCache(src);
+            throw e;
+          }
+        });
         texCache.set(key, t);
       } catch {
         /* the build loads it itself */

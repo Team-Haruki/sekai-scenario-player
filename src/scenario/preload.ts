@@ -348,7 +348,7 @@ export class Preload {
         this.count(-got); // what a failed attempt received doesn't count
         if (this.opts.signal.aborted && isAbort(e)) throw e;
         const again = retryable(e);
-        if (again) markDown(src);
+        if (again && !(e instanceof SyntaxError)) markDown(src); // a parse error: the host answered
         if (!again || attempt >= RETRIES) throw e;
         if ((attempt + 1) % order.length === 0) await new Promise((r) => setTimeout(r, 400 * 2 ** Math.floor(attempt / order.length)));
       }

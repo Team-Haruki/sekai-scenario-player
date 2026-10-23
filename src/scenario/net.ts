@@ -61,7 +61,8 @@ async function fetchWith<T>(url: string, read: (r: Response) => Promise<T>, { ti
     } catch (e) {
       if (signal?.aborted && isAbort(e)) throw e;
       const again = retryable(e);
-      if (again) markDown(src);
+      // a body that isn't what we asked for (an HTML page instead of JSON) came from a host that answers
+      if (again && !(e instanceof SyntaxError)) markDown(src);
       if (!again || attempt >= retries) throw e instanceof HttpError || e instanceof TruncatedError ? e : new Error(`${src}: ${(e as Error).message}`);
       // the other host at once; the same host again after a short backoff
       if ((attempt + 1) % order.length === 0) await new Promise((r) => setTimeout(r, 400 * 2 ** Math.floor(attempt / order.length)));

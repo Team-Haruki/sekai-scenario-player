@@ -85,7 +85,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 
 | Method | Description |
 |---|---|
-| `load(scenario, { autoplay?, context?, files? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). `context` reaches every per-episode resolver call as `ctx.data`. `files` are this scenario's files the host already has (see [Handing files in](#handing-files-in)), dropped at the next load. `preload` overrides the option for this scenario. Resolves once playback starts or the start button shows |
+| `load(scenario, { autoplay?, context?, files?, preload? })` | Load a scenario in place of the current one: a `ScenarioSceneData` object, a ScenarioId (fetched through `assets.scenario()`), or a URL (starting with `http(s):`, `/`, `.` or `blob:`). `context` reaches every per-episode resolver call as `ctx.data`. `files` are this scenario's files the host already has (see [Handing files in](#handing-files-in)), dropped at the next load. `preload` overrides the option for this scenario. Resolves once playback starts or the start button shows |
 | `play()` | Start the loaded scenario. Call it from a user gesture when the browser blocked autoplay |
 | `jumpTo(index)` | Restart at snippet `index`, with the stage rebuilt as it was at that point |
 | `advance()` | Same as tapping the stage: finish typing, or advance a line waiting for input |
@@ -137,7 +137,7 @@ The player doesn't wait for every model before it starts.
 - **What it waits for:** the costumes on stage before the third line of dialogue, and the first line's voice (5 s at most). Under the spinner the bar follows those costumes, and the text counts them, the files loaded of those asked for, and the MB so far.
 - **The rest** load while the episode plays, three at a time.
 - **Time limits and retries:** nothing waits forever.
-  - JSON fetches (scenario, manifest, model3, motions, facials, physics) time out after 15 s, a model's moc and textures after 60 s, voices and SEs after 8 s; each is retried twice (network errors, timeouts, 5xx and bodies cut short), on the resolver's [fallback host](#fallback-host) first when it names one.
+  - JSON fetches (scenario, manifest, model3, motions, facials, physics) time out after 15 s, a model's moc and textures after 60 s, voices and SEs after 8 s. JSON, mocs and textures are retried twice, voices and SEs once (network errors, timeouts, 5xx and bodies cut short), on the resolver's [fallback host](#fallback-host) first when it names one.
   - A costume that fails to load is retried once.
   - A costume that takes longer than 30 s is given up on. It is still used if it arrives later.
   - An appearance waits at most 12 s for a costume that is still loading. Otherwise that appearance is skipped and the timeline carries on.
