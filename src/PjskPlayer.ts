@@ -682,8 +682,7 @@ export class PjskPlayer {
       void fx.play(anniv ? "sekai_transition_3anv" : "sekai_transition").then((i) => setTimeout(() => i?.stop(), 5000)); // DestroyAtTime 5s
     stage.onBackground = (id) => fx.background(id, stage.bgFxLayer);
     player.onEffectsRestore = (names, holos) => {
-      fx.clear();
-      for (const n of names) void fx.play(n);
+      fx.restore(names);
       for (const id of holos) holo(id);
     };
     player.auto = this.modes.auto;

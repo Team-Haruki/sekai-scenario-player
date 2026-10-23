@@ -25,6 +25,8 @@ const UNIT = 540; // ref px per world unit (UIParticle prefabs override via effe
 const GRAVITY = 9.81;
 const DEG = Math.PI / 180;
 const MAX_BURSTS_PER_STEP = 64; // catch-up bound for a burst repeating faster than the frame rate
+const SETTLE_MAX = 10; // s an effect restored by a jump is run on before it shows
+const SETTLE_STEP = 1 / 30;
 
 // ── data types (effect.json) ─────────────────────────────────────────────────
 type Curve = { k: [number, number, number, number][]; w?: [number, number] } | null;
@@ -951,6 +953,25 @@ export class FxInstance {
   // ── per frame ─────────────────────────────────────────────────────────────
   update(dt: number) {
     if (this.state === "dead") return;
+    this.simulate(dt);
+    this.render();
+  }
+
+  // After a jump: run the effect on, unseen, for as long as a first run takes
+  // (up to SETTLE_MAX), so a one-shot (a flash) has played out and a loop is
+  // under way, as they would be some lines after the effect started.
+  settle() {
+    let len = 0;
+    for (const em of this.emitters.values()) {
+      const top = (m?: MinMax) => (m ? Math.max(m.s ?? 0, m.n ?? 0) : 0);
+      const run = top(em.ps.startDelay) + em.duration + top(em.ps.InitialModule?.startLifetime);
+      len = Math.max(len, run / (em.ps.simulationSpeed || 1)); // step() runs at simulationSpeed
+    }
+    for (const c of Object.values(this.data.clips)) len += c.len || 0;
+    for (let t = 0; t < Math.min(len, SETTLE_MAX) && this.state !== "dead"; t += SETTLE_STEP) this.simulate(SETTLE_STEP);
+  }
+
+  private simulate(dt: number) {
     this.animate(dt);
     this.layout();
     // activation edges restart / clear systems (playOnAwake)
@@ -971,7 +992,14 @@ export class FxInstance {
       em.scale = this.data.nodes[i].scale.map((v, j) => this.st[i].scale[j] ?? v);
       if (s.wasActive || em.isSub) em.step(dt);
     }
-    // render
+    if (this.state === "stopping") {
+      this.stopClipLeft -= dt;
+      const alive = [...this.emitters.values()].some((e) => e.particles.length > 0);
+      if (!alive && this.stopClipLeft <= 0) this.state = "dead";
+    }
+  }
+
+  private render() {
     for (const [i, em] of this.emitters) em.build(this.visible && (this.st[i].wasActive || em.isSub) ? 1 : 0);
     for (const [i, spr] of this.sprites) {
       const s = this.st[i];
@@ -995,11 +1023,6 @@ export class FxInstance {
       const c = s.color ?? [1, 1, 1, 1];
       spr.tint = new PIXI.Color([c[0], c[1], c[2]].map((v) => Math.min(1, Math.max(0, v)))).toNumber();
       spr.alpha = Math.max(0, Math.min(1, c[3]));
-    }
-    if (this.state === "stopping") {
-      this.stopClipLeft -= dt;
-      const alive = [...this.emitters.values()].some((e) => e.particles.length > 0);
-      if (!alive && this.stopClipLeft <= 0) this.state = "dead";
     }
   }
 
@@ -1211,6 +1234,12 @@ export class FxManager {
   }
   clear() {
     for (const l of this.live) if (l.name !== BG_KEY) l.fx.forceStop();
+  }
+  // After a jump: the effects playing at the target, each run on first (see
+  // FxInstance.settle); played from the start, a one-shot flashes on every jump.
+  restore(names: string[]) {
+    this.clear();
+    for (const n of names) void this.play(n).then((fx) => fx?.settle());
   }
 
   // Prefab backgrounds (ScenarioBGData.BackgroundPrefab): replace the running one.
