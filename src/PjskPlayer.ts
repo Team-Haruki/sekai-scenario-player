@@ -6,7 +6,7 @@ import * as PIXI from "pixi.js";
 
 import css from "./style.css?inline";
 import { buildMotionIndex } from "./scenario/assets";
-import { AudioManager } from "./scenario/audio";
+import { AudioManager, type VolumeKind } from "./scenario/audio";
 import { Clock } from "./scenario/clock";
 import { DialogueBox } from "./scenario/dialogue";
 import { Effects } from "./scenario/effects";
@@ -48,6 +48,8 @@ export interface PlayerOptions {
   menu?: boolean | readonly MenuItem[];
   /** Start muted. Default false. */
   muted?: boolean;
+  /** Listener volumes (0-1) for BGM, voices and SE; 1 each by default. */
+  volumes?: Partial<Record<VolumeKind, number>>;
   /** Play the voices. Default true. */
   voice?: boolean;
   /** Script of the text being shown, for its fonts (see setTextScript). Default "ja". */
@@ -241,6 +243,7 @@ export class PjskPlayer {
       fullscreen: false,
     };
     this.audio.setMuted(this.modes.muted);
+    for (const [kind, v] of Object.entries(options.volumes ?? {}) as [VolumeKind, number][]) this.audio.setVolume(kind, v);
 
     injectStyle("pjsk-player-style", css);
     if (options.fonts !== false) {
@@ -399,6 +402,13 @@ export class PjskPlayer {
     this.modes.muted = on;
     this.audio.setMuted(on);
     this.syncModes();
+  }
+  /** Listener volume (0-1) for BGM, voices or SE, on top of the scenario's own levels; applies at once. */
+  setVolume(kind: VolumeKind, value: number) {
+    this.audio.setVolume(kind, value);
+  }
+  getVolume(kind: VolumeKind) {
+    return this.audio.getVolume(kind);
   }
   get voice() {
     return this.modes.voice;

@@ -1,6 +1,6 @@
 {
   "name": "pjsk-scenario-player",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Browser replica of Project SEKAI's story player: plays ScenarioSceneData with Live2D, as an embeddable library.",
   "license": "MIT",
   "repository": {

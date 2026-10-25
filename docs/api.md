@@ -74,6 +74,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `labels` | `{ start?, loading?, models?, files?, preloading?, preloadFailed?, retry?, continue?, menu? }` | — | Override individual strings (`models`, `files` and `preloading` prefix the loading counts; `preloadFailed` puts the number of failed files in for `{n}`) |
 | `menu` | `boolean \| MenuItem[]` | `DEFAULT_MENU` | The ⋯ story menu: `false` hides it, a list picks its buttons. `DEFAULT_MENU` is fullscreen, auto, mute, fast, hide, log; `GAME_MENU` is the game's own panel (bookmark, consecutive and skip only look like the game) |
 | `muted` | `boolean` | `false` | Start muted |
+| `volumes` | `{ bgm?, voice?, se? }` | `1` each | Listener volumes (0–1) on top of the scenario's own levels (see `setVolume`) |
 | `voice` | `boolean` | `true` | Play the voices |
 | `textScript` | `"ja" \| "latin" \| "zh" \| "ko"` | `"ja"` | Script of the text being shown, for its fonts (see `setTextScript`) |
 | `fonts` | `false \| { name?, body? }` | Source Han Sans Bold / Medium from `<assets>/fonts/` | Talk window font URLs: `name` for the name plate, `body` for lines. `false` registers none and uses system fonts |
@@ -92,6 +93,7 @@ Cubism Core is licensed under Live2D's proprietary license and can't be bundled.
 | `setAuto(on)` / `setFast(on)` / `setUiHidden(on)` | Auto / fast-forward / hide the UI |
 | `setLogActive(on)` | Light up the menu's Log button (the host owns the log it opens) |
 | `setMuted(on)` | Silence BGM, SE and voices; lip-sync keeps following the voice |
+| `setVolume(kind, value)` / `getVolume(kind)` | Listener volume (0–1) for `"bgm"`, `"voice"` or `"se"`, multiplied with the scenario's own levels (BGM fades, `BgmVolume` snippets, per-line voice volume). BGM and voice change at once, SE from the next effect; the voice volume is applied after the lip-sync analyser, so mouths keep moving at any volume |
 | `setVoice(on)` | Play the voices or not; without them lines advance on the no-voice timing. Takes effect from the next line |
 | `setFullscreen(on)` / `toggleFullscreen()` | Fullscreen on the player, locked to landscape where the browser allows. Where pages can't go fullscreen (iPhone Safari) the player covers the viewport instead, turned sideways while the phone is held upright; Escape leaves it |
 | `setTextScript(script)` | The script of the text being shown. `"zh"` / `"ko"` switch the talk window, telops and captions to the `--pjsk-font-zh-*` / `--pjsk-font-ko-*` families with bold names and medium lines |

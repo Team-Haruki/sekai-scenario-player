@@ -17,6 +17,11 @@ import { HttpError, fetchBlob, withTimeout } from "./net";
 import { fileUrl } from "./files";
 import { hostFailed, markDown, markServed, sources } from "./hosts";
 
+/** What a listener volume applies to. */
+export type VolumeKind = "bgm" | "voice" | "se";
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 // per attempt: a clip is at most a few hundred KB, and a stalled host must
 // give way to its fallback while the line still waits for its voice (VOICE_WAIT)
@@ -164,8 +169,15 @@ class Track {
 
 export class AudioManager {
   private muted = false;
+  // listener volume per kind (0-1), applied on top of the scenario's own levels
+  private vol: Record<VolumeKind, number> = { bgm: 1, voice: 1, se: 1 };
+  // a BGM element's level as the scenario sets it (fades, BgmVolume); el.volume = level x vol.bgm
+  private bgmLevel = new WeakMap<HTMLAudioElement, number>();
+  // the voice line's own volume, for the direct (no-graph) path
+  private voiceBase = 1;
   private ctx?: AudioContext;
   private master?: GainNode; // after the analyser, so muting keeps the lip-sync input
+  private voiceGain?: GainNode; // voice volume, also after the analyser
   private analyser?: AnalyserNode;
   private timeBuf?: Uint8Array<ArrayBuffer>;
   private clips = new Map<string, Clip>();
@@ -229,8 +241,11 @@ export class AudioManager {
       analyser.fftSize = 256;
       const master = ctx.createGain();
       master.gain.value = this.muted ? 0 : 1;
-      analyser.connect(master);
+      const voiceGain = ctx.createGain();
+      voiceGain.gain.value = this.vol.voice;
+      analyser.connect(voiceGain).connect(master);
       master.connect(ctx.destination);
+      this.voiceGain = voiceGain;
       this.ctx = ctx;
       this.analyser = analyser;
       this.master = master;
@@ -302,6 +317,28 @@ export class AudioManager {
     if (this.master) this.master.gain.value = muted ? 0 : 1;
   }
 
+  /** Listener volume (0-1) for BGM, voices or SE, on top of the scenario's own levels. */
+  setVolume(kind: VolumeKind, value: number) {
+    const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 1));
+    this.vol[kind] = v;
+    if (kind === "bgm") for (const t of this.bgmTracks) this.applyBgm(t.el);
+    if (kind === "voice") {
+      if (this.voiceGain) this.voiceGain.gain.value = v;
+      if (this.direct) this.voiceTrack.el.volume = clamp01(this.voiceBase * v);
+    }
+  }
+  getVolume(kind: VolumeKind) {
+    return this.vol[kind];
+  }
+
+  private setBgmLevel(el: HTMLAudioElement, level: number) {
+    this.bgmLevel.set(el, clamp01(level));
+    this.applyBgm(el);
+  }
+  private applyBgm(el: HTMLAudioElement) {
+    el.volume = clamp01((this.bgmLevel.get(el) ?? 0) * this.vol.bgm);
+  }
+
   // ── BGM ──────────────────────────────────────────────────────────────────
   playBgm(urls: string[], volume = 1, fadeMs = 250) {
     const url = urls[0];
@@ -314,7 +351,7 @@ export class AudioManager {
     t.load(urls, () => console.warn("bgm load failed", url));
     t.el.loop = true;
     t.el.muted = this.muted;
-    t.el.volume = fadeMs > 0 ? 0 : volume;
+    this.setBgmLevel(t.el, fadeMs > 0 ? 0 : volume);
     void t.play(); // refused before a gesture: unlock() starts it
     this.bgm = t;
     if (fadeMs > 0) {
@@ -330,11 +367,11 @@ export class AudioManager {
 
   private fadeAudio(el: HTMLAudioElement, to: number, ms: number, done?: () => void) {
     this.cancelFade(el);
-    const from = el.volume;
+    const from = this.bgmLevel.get(el) ?? 0;
     const t0 = Date.now();
     const tick = () => {
       const k = Math.min(1, (Date.now() - t0) / ms);
-      el.volume = Math.max(0, Math.min(1, from + (to - from) * k));
+      this.setBgmLevel(el, from + (to - from) * k);
       if (k < 1) this.fades.set(el, setTimeout(tick, 33));
       else {
         this.fades.delete(el);
@@ -352,7 +389,7 @@ export class AudioManager {
     }
   }
   setBgmVolume(v: number) {
-    if (this.bgm) this.bgm.el.volume = Math.max(0, Math.min(1, v));
+    if (this.bgm) this.setBgmLevel(this.bgm.el, v);
   }
 
   // ── SE ───────────────────────────────────────────────────────────────────
@@ -368,7 +405,7 @@ export class AudioManager {
         const src = ctx.createBufferSource();
         src.buffer = buf;
         const g = ctx.createGain();
-        g.gain.value = volume;
+        g.gain.value = volume * this.vol.se;
         src.connect(g).connect(this.master!);
         src.start();
       });
@@ -378,7 +415,7 @@ export class AudioManager {
     const a = new Track();
     a.load(urls, () => console.warn("se load failed", urls[0]));
     a.el.muted = this.muted;
-    a.el.volume = volume;
+    a.el.volume = clamp01(volume * this.vol.se);
     void a.play();
   }
 
@@ -428,7 +465,8 @@ export class AudioManager {
         this.voiceBlobUrl = URL.createObjectURL(blob);
         t.load([this.voiceBlobUrl], failed);
         t.el.muted = this.muted;
-        t.el.volume = volume;
+        this.voiceBase = volume;
+        t.el.volume = clamp01(volume * this.vol.voice);
         t.onEnded = finish;
         this.direct = true;
         if (!(await t.play()) && live()) {
