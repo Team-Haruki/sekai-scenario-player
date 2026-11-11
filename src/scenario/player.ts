@@ -66,6 +66,7 @@ interface ReplayState {
   bg: string;
   bgm: string;
   bgmVolume?: number;
+  bgmBlock?: number;
   layoutMode: number;
   fade: RGBA;
   colorEffect?: ColorEffect;
@@ -206,6 +207,7 @@ export class ScenarioPlayer {
 
   private async playFrom(start: number, gen: number) {
     if (start === 0) {
+      this.audio.setBgmVolume(1);
       if (this.scn.FirstBgm) this.audio.playBgm(this.assets.bgm(this.scn.FirstBgm), 0.7);
       for (const l of this.scn.FirstLayout || []) {
         await this.stage.appear(
@@ -243,7 +245,24 @@ export class ScenarioPlayer {
   preload() {
     this.prefetchAhead(0);
     const first = this.waitForAll ? new Set(this.scn.AppearCharacters.map((c) => c.CostumeType)) : earlyCostumes(this.scn);
-    return (this.preloading ??= this.stage.preloadAll(this.scn.AppearCharacters, first, (p) => this.onLoadProgress?.(p)));
+    return (this.preloading ??= Promise.all([
+      this.stage.preloadAll(this.scn.AppearCharacters, first, (p) => this.onLoadProgress?.(p)),
+      this.prepareBgm(),
+    ]).then(() => {}));
+  }
+
+  private async prepareBgm() {
+    const required = new Set<string>();
+    let cue = this.scn.FirstBgm;
+    for (const snippet of this.scn.Snippets) {
+      if (snippet.Action !== Action.Sound) continue;
+      const sound = this.scn.SoundData[snippet.ReferenceIndex];
+      if (!sound) continue;
+      if ((sound.PlayMode === SoundPlayMode.CrossFade || sound.PlayMode === SoundPlayMode.Stack) && sound.Bgm) cue = sound.Bgm;
+      if (sound.PlayMode === SoundPlayMode.BgmAisacIndex) required.add(cue);
+    }
+    const cues = new Set([this.scn.FirstBgm, ...this.scn.SoundData.map(s => s.Bgm)].filter(id => id && id !== 'bgm00000'));
+    await Promise.all([...cues].map(id => this.audio.prepareBgm(this.assets.bgm(id), this.assets.bgmSequence?.(id) ?? [], required.has(id))));
   }
 
   private firstVoice(): Promise<void> {
@@ -291,6 +310,7 @@ export class ScenarioPlayer {
     this.audio.stopVoice();
     this.audio.stopSe();
     this.audio.stopBgm();
+    this.audio.setBgmVolume(1);
     this.dialogue.reset();
     this.effects.reset([0, 0, 0, 0]);
     const f = this.finished;
@@ -325,9 +345,11 @@ export class ScenarioPlayer {
     this.effects.reset(st.fade, st.sideCover);
     this.stage.setColorEffect(st.colorEffect);
     this.stage.setAmbient(st.ambient);
+    this.audio.stopBgm();
     if (st.bgm) this.audio.playBgm(this.assets.bgm(st.bgm), 0.7, 0);
     else this.audio.stopBgm();
-    if (st.bgmVolume != null) this.audio.setBgmVolume(st.bgmVolume);
+    this.audio.setBgmVolume(st.bgmVolume ?? 1);
+    if (st.bgmBlock != null) this.audio.setBgmBlockIndex(st.bgmBlock, true);
     await Promise.all(
       [...st.chars].map(([id, c]) =>
         this.stage.place(id, c.costume, c.side, c.offsetX, c.motion, c.facial, c.visible),
@@ -478,8 +500,10 @@ export class ScenarioPlayer {
         case Action.Sound: {
           const so = scn.SoundData[s.ReferenceIndex];
           if (!so) break;
-          if ((so.PlayMode === SoundPlayMode.CrossFade || so.PlayMode === SoundPlayMode.Stack) && so.Bgm)
+          if ((so.PlayMode === SoundPlayMode.CrossFade || so.PlayMode === SoundPlayMode.Stack) && so.Bgm) {
+            if (st.bgm !== so.Bgm) st.bgmBlock = undefined;
             st.bgm = so.Bgm;
+          } else if (so.PlayMode === SoundPlayMode.BgmAisacIndex) st.bgmBlock = so.BgmBlockIndex;
           else if (so.PlayMode === SoundPlayMode.BgmVolume) st.bgmVolume = so.Volume;
           break;
         }
@@ -889,8 +913,11 @@ export class ScenarioPlayer {
         // game mode 3 stops the named SE via playSEDict.
         if (s.Se) this.audio.stopSe(this.assets.se(s.Se));
         return;
+      case SoundPlayMode.BgmAisacIndex:
+        this.audio.setBgmBlockIndex(s.BgmBlockIndex);
+        return;
       case SoundPlayMode.BgmVolume:
-        this.audio.setBgmVolume(s.Volume);
+        this.audio.setBgmVolume(s.Volume, Math.max(0, s.Duration || 0) * 1000);
         return;
       default:
         return;

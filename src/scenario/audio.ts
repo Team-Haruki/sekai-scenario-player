@@ -14,6 +14,7 @@
 // always streams from one of two primed elements (two for the crossfade).
 
 import { HttpError, fetchBlob, withTimeout } from "./net";
+import { BlockBgmPlayer, loadBgmSequence, type PreparedBgm } from "./bgm-sequence";
 import { fileUrl } from "./files";
 import { hostFailed, markDown, markServed, sources } from "./hosts";
 
@@ -186,6 +187,27 @@ export class AudioManager {
   private bgm?: Track;
   private bgmUrl?: string;
   private fades = new WeakMap<HTMLAudioElement, ReturnType<typeof setTimeout>>();
+  private sequences = new Map<string, PreparedBgm>();
+  private sequence?: BlockBgmPlayer;
+  private fadingSequences = new Set<BlockBgmPlayer>();
+  private bgmGain?: GainNode;
+  private bgmCategory = 1;
+  private categoryFade?: ReturnType<typeof setTimeout>;
+  private disposed = false;
+
+  async prepareBgm(urls: string[], manifests: string[], required = false) {
+    const key = urls.join("\n");
+    if (this.sequences.has(key) || this.disposed) return;
+    const prepared = manifests.length ? await loadBgmSequence(manifests, this.ensureCtx()) : undefined;
+    if (this.disposed) return;
+    if (prepared) this.sequences.set(key, prepared);
+    else if (required) throw new Error(`Missing BGM block sequence: ${urls[0] ?? 'unknown cue'}`);
+  }
+
+  setBgmBlockIndex(index: number, restore = false) {
+    if (!this.sequence) throw new Error('BGM block sequence was not prepared');
+    this.sequence.setBlock(index, restore);
+  }
 
   private soundEffects = new Set<{
     key: string; base: number; track?: Track; node?: AudioBufferSourceNode; gain?: GainNode;
@@ -326,7 +348,7 @@ export class AudioManager {
   setVolume(kind: VolumeKind, value: number) {
     const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 1));
     this.vol[kind] = v;
-    if (kind === "bgm") for (const t of this.bgmTracks) this.applyBgm(t.el);
+    if (kind === "bgm") this.applyBgmCategory();
     if (kind === "se") for (const se of this.soundEffects) {
       if (se.gain) se.gain.gain.value = clamp01(se.base * v);
       if (se.track) se.track.el.volume = clamp01(se.base * v);
@@ -345,28 +367,48 @@ export class AudioManager {
     this.applyBgm(el);
   }
   private applyBgm(el: HTMLAudioElement) {
-    el.volume = clamp01((this.bgmLevel.get(el) ?? 0) * this.vol.bgm);
+    el.volume = clamp01((this.bgmLevel.get(el) ?? 0) * this.vol.bgm * this.bgmCategory);
   }
 
   // ── BGM ──────────────────────────────────────────────────────────────────
   playBgm(urls: string[], volume = 1, fadeMs = 250) {
     const url = urls[0];
-    if (this.bgm && this.bgmUrl === url) return; // same BGM already playing
-    const old = this.bgm;
-    const t = this.bgmTracks.find((x) => x !== old)!;
-    this.cancelFade(t.el);
-    t.stop(); // still fading out from the BGM before
+    if ((this.bgm || this.sequence) && this.bgmUrl === url) return;
+    const old = this.bgm, oldSequence = this.sequence;
+    this.bgm = undefined; this.sequence = undefined;
     this.bgmUrl = url;
-    t.load(urls, () => console.warn("bgm load failed", url));
-    t.el.loop = true;
-    t.el.muted = this.muted;
-    this.setBgmLevel(t.el, fadeMs > 0 ? 0 : volume);
-    void t.play(); // refused before a gesture: unlock() starts it
-    this.bgm = t;
-    if (fadeMs > 0) {
-      this.fadeAudio(t.el, volume, fadeMs); // fade in new
-      if (old) this.fadeAudio(old.el, 0, fadeMs, () => old.stop()); // crossfade out old
-    } else old?.stop();
+    const prepared = this.sequences.get(urls.join("\n"));
+    if (prepared) {
+      const ctx = this.ensureCtx();
+      if (!this.bgmGain) {
+        this.bgmGain = ctx.createGain();
+        this.bgmGain.connect(this.master!);
+      }
+      this.applyBgmCategory();
+      this.sequence = new BlockBgmPlayer(ctx, prepared, this.bgmGain);
+      this.sequence.start(volume, fadeMs);
+    } else if (urls.length) {
+      const t = this.bgmTracks.find(x => x !== old)!;
+      this.cancelFade(t.el);
+      t.stop();
+      t.load(urls, () => console.warn("bgm load failed", url));
+      t.el.loop = true;
+      t.el.muted = this.muted;
+      this.setBgmLevel(t.el, fadeMs > 0 ? 0 : volume);
+      void t.play();
+      this.bgm = t;
+      if (fadeMs > 0) this.fadeAudio(t.el, volume, fadeMs);
+    }
+    if (old) {
+      if (fadeMs > 0) this.fadeAudio(old.el, 0, fadeMs, () => old.stop());
+      else { this.cancelFade(old.el); old.stop(); }
+    }
+    if (oldSequence) {
+      if (fadeMs > 0) {
+        this.fadingSequences.add(oldSequence);
+        oldSequence.fadeOut(fadeMs, () => this.fadingSequences.delete(oldSequence));
+      } else oldSequence.stop();
+    }
   }
 
   private cancelFade(el: HTMLAudioElement) {
@@ -390,6 +432,9 @@ export class AudioManager {
     tick();
   }
   stopBgm() {
+    this.sequence?.stop(); this.sequence = undefined;
+    for (const sequence of this.fadingSequences) sequence.stop();
+    this.fadingSequences.clear();
     for (const t of this.bgmTracks) {
       this.cancelFade(t.el);
       t.stop();
@@ -397,8 +442,20 @@ export class AudioManager {
     this.bgm = undefined;
     this.bgmUrl = undefined;
   }
-  setBgmVolume(v: number) {
-    if (this.bgm) this.setBgmLevel(this.bgm.el, v);
+  private applyBgmCategory() {
+    for (const t of this.bgmTracks) this.applyBgm(t.el);
+    if (this.bgmGain) this.bgmGain.gain.value = this.vol.bgm * this.bgmCategory;
+  }
+  setBgmVolume(v: number, fadeMs = 0) {
+    clearTimeout(this.categoryFade);
+    const from = this.bgmCategory, to = clamp01(v), start = Date.now();
+    const tick = () => {
+      const k = fadeMs > 0 ? Math.min(1, (Date.now() - start) / fadeMs) : 1;
+      this.bgmCategory = from + (to - from) * k;
+      this.applyBgmCategory();
+      if (k < 1) this.categoryFade = setTimeout(tick, 16);
+    };
+    tick();
   }
 
   // ── SE ───────────────────────────────────────────────────────────────────
@@ -539,6 +596,9 @@ export class AudioManager {
   }
 
   destroy() {
+    this.disposed = true;
+    clearTimeout(this.categoryFade);
+    this.sequences.clear();
     for (const e of GESTURES) removeEventListener(e, this.unlock, { capture: true });
     this.stopVoice();
     this.stopBgm();

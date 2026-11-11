@@ -31,6 +31,7 @@ const TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".webp": "image/webp",
   ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
   ".mp4": "video/mp4",
   ".otf": "font/otf",
   ".ttf": "font/ttf",

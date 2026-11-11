@@ -138,3 +138,26 @@ Converted effects are separate deployment assets. If a scenario requests an
 unknown effect, run `tools/fx_convert.py` for its prefab and deploy the resulting
 `fx/<name>/effect.json` together with all referenced textures to the asset host;
 upgrading the library alone cannot supply these game assets.
+
+### Block-sequence BGM
+
+CRI block cues need an ACB-derived `bgm/<cue>/sequence.json` plus its decoded
+waveforms. Keep the normal MP3s: flat BGM still uses them. The optional
+`AssetResolver.bgmSequence` returns the descriptor URL; the default resolver
+looks under `bgm/<cue>/sequence.json`. Custom hosts may return null for cues
+without a descriptor. A scenario containing a block-change command fails
+preparation if its sequence is absent, rather than silently playing the flat MP3.
+
+The version 1 descriptor contains `cue`, `waves` (file and duration), and `blocks`
+(duration, loop/loopCount, transition, divisions and note events). Events specify
+`at`, `wave`, `gain` and an optional `IM_001` or `IM_002` one-voice group. Wave
+paths are local filenames relative to the descriptor. See the synthetic fixtures
+in `tests/bgm-sequence.test.mjs`; game data and decoded audio stay outside git.
+
+`SoundPlayMode.BgmAisacIndex` follows the 7.1.0 `SetBgmBlockIndex` state machine:
+wait for an even block, enter the following transition block at its configured
+boundary, then enter the target block. Playback uses the Web Audio clock for
+wave scheduling. Seeking restores the target block from its start; it does not
+reconstruct elapsed music time from the reader's earlier manual dialogue pauses.
+`BgmVolume` applies its duration as a category fade across cue changes, multiplied
+by each cue's crossfade and the listener volume.
