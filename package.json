@@ -57,9 +57,9 @@
     "pixi.js": "^7.4.3"
   },
   "devDependencies": {
-    "@lucide/vue": "^1.61.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/node": "^26.6.5",
+    "@lucide/vue": "^1.70.0",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vitest/coverage-v8": "^3.2.7",
     "@vueuse/core": "^15.0.0",
@@ -72,8 +72,8 @@
     "typescript": "~5.7.2",
     "vite": "^6.2.0",
     "vitest": "^3.2.7",
-    "vue": "^3.5.44",
+    "vue": "^3.5.45",
     "vue-sonner": "^2.0.9",
-    "vue-tsc": "^3.3.13"
+    "vue-tsc": "^3.3.14"
   }
 }
