@@ -120,3 +120,21 @@ Without it, models, BGM, voices, SEs and fonts fail to load.
 ## Copyright
 
 These assets belong to SEGA, Colorful Palette, Crypton Future Media and other rights holders. Don't commit them to this repository or publish them; `.gitignore` already excludes `/assets/`.
+
+### Shared character voices
+
+The asset server resolves scenario-local voices first, then shared `partvoice_`
+clips from the scenario's `AppearCharacters` and the `character2ds` /
+`gameCharacters` master tables. Supply `master` for shared voices. A cue suffix
+such as `band` does not identify its bundle: an idol-world character can use it.
+`assetHandler` also accepts `scenarioRoot` for prepared
+`<scenarioId>/scenario.json` files that are not yet in the catalog.
+
+Custom CDN resolvers can use the exported `sharedVoicePaths` helper with
+`ctx.scenario` and those master tables, appending its candidates after the
+scenario-local paths. This does not require filesystem access.
+
+Converted effects are separate deployment assets. If a scenario requests an
+unknown effect, run `tools/fx_convert.py` for its prefab and deploy the resulting
+`fx/<name>/effect.json` together with all referenced textures to the asset host;
+upgrading the library alone cannot supply these game assets.

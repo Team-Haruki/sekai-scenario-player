@@ -24,3 +24,6 @@ export function createPlayer(container: HTMLElement | string, options: PlayerOpt
   if (!el) throw new Error(`createPlayer: no element ${container}`);
   return new PjskPlayer(el, options);
 }
+
+export { sharedVoicePaths } from "./scenario/shared-voices";
+export type { VoiceCharacter2d, VoiceGameCharacter } from "./scenario/shared-voices";
