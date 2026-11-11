@@ -1,6 +1,6 @@
 {
   "name": "pjsk-scenario-player",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Browser replica of Project SEKAI's story player: plays ScenarioSceneData with Live2D, as an embeddable library.",
   "license": "MIT",
   "repository": {
@@ -44,7 +44,8 @@
     "preview": "vite preview --config web/vite.config.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json && vue-tsc --noEmit -p web/tsconfig.json",
     "serve:assets": "node server/cli.ts",
-    "prepare": "npm run build:lib"
+    "prepare": "npm run build:lib",
+    "test": "node --test tests/*.test.mjs"
   },
   "peerDependencies": {
     "pixi.js": "^7.4.3"

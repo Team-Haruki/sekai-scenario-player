@@ -289,6 +289,7 @@ export class ScenarioPlayer {
     for (const tm of this.motionTimers) clearTimeout(tm);
     this.motionTimers = [];
     this.audio.stopVoice();
+    this.audio.stopSe();
     this.audio.stopBgm();
     this.dialogue.reset();
     this.effects.reset([0, 0, 0, 0]);
@@ -312,6 +313,7 @@ export class ScenarioPlayer {
     this.motionTimers = [];
     this.talkingSnippet = undefined;
     this.audio.stopVoice();
+    this.audio.stopSe();
     this.dialogue.reset();
 
     const st = this.replay(seq);
@@ -876,7 +878,7 @@ export class ScenarioPlayer {
           this.audio.playBgm(this.assets.bgm(s.Bgm), 0.7, s.Duration > 0 ? s.Duration * 1000 : 250);
         if (s.Se) {
           const se = s.Se;
-          if (s.Duration > 0) setTimeout(() => this.audio.playSe(this.assets.se(se), 1), s.Duration * 1000);
+          if (s.Duration > 0) void this.clock.sleep(s.Duration * 1000).then(() => this.audio.playSe(this.assets.se(se), 1));
           else this.audio.playSe(this.assets.se(se), 1);
         }
         return;
@@ -884,8 +886,8 @@ export class ScenarioPlayer {
         if (s.Se) this.audio.playSe(this.assets.se(s.Se), s.Volume ?? 1);
         return;
       case SoundPlayMode.Stop:
-        // game mode 3 stops an SE (via playSEDict), NOT the BGM. We don't track
-        // SE one-shots, so this is a no-op (do NOT stop the BGM here).
+        // game mode 3 stops the named SE via playSEDict.
+        if (s.Se) this.audio.stopSe(this.assets.se(s.Se));
         return;
       case SoundPlayMode.BgmVolume:
         this.audio.setBgmVolume(s.Volume);

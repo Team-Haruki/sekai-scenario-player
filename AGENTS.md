@@ -45,7 +45,7 @@ npm run build        # dist/lib (ESM + d.ts) and dist/site
 node server/cli.ts --root … --master … [--staged assets] [--port 5174]
 ```
 
-There are no tests and no linter yet. Run at least `npm run typecheck` after a change. To check a change visually, use the headless Chrome screenshot command in docs/internals.md ("Pitfalls").
+Run `npm test` for audio and effect lifecycle regressions, and `npm run typecheck` after a change. There is no linter yet. To check a change visually, use the headless Chrome screenshot command in docs/internals.md ("Pitfalls").
 
 ## Conventions
 
