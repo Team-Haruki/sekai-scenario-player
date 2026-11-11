@@ -7,6 +7,8 @@ Issues and pull requests are welcome. This page covers what to know before you s
 ```bash
 npm install
 npm run dev          # preview site + the /assets/ mount
+npm test            # audio, effects and asset-resolution regressions
+npm run test:coverage # V8 coverage, including coverage/lcov.info
 npm run typecheck    # run before every commit
 npm run build
 ```
@@ -61,8 +63,9 @@ Commit subjects follow `[Type] Short description`:
 SonarQube Cloud analysis runs through `sonar.yml` in CI after the web checks, using
 the organization's `SONAR_TOKEN` secret and `sonar-project.properties`. Disable
 SonarQube Cloud automatic analysis to avoid duplicate/conflicting scans. Fork and
-Dependabot PRs skip the scan because they cannot access the secret. The repository
-does not yet produce coverage reports. The scan upload participates in **CI OK**;
+Dependabot PRs skip the scan because they cannot access the secret. The Web job runs `npm run test:coverage` and uploads `coverage/lcov.info` as
+`coverage-js`; the Sonar job downloads and imports that report. Tests under
+`tests/` are classified as test code, separate from production sources. The scan upload participates in **CI OK**;
 SonarQube Cloud reports the quality gate separately without suppressing findings.
 
 Reuse a template first. Add a custom job or step only when no template can do it, keep it in the caller and comment why; template bugs and gaps are fixed upstream in ci-templates. Dependabot opens weekly `[Chore]` PRs for npm and GitHub Actions.

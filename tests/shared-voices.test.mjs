@@ -1,15 +1,11 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:http';
-import { createServer as createViteServer } from 'vite';
-import { after } from 'node:test';
-const vite = await createViteServer({ configFile: false, server: { middlewareMode: true } });
-after(() => vite.close());
-const { assetHandler } = await vite.ssrLoadModule('/server/asset-tree.ts');
-const { sharedVoicePaths } = await vite.ssrLoadModule('/src/scenario/shared-voices.ts');
+import { assetHandler } from '../server/asset-tree';
+import { sharedVoicePaths } from '../src/scenario/shared-voices';
 
 test('scenario voices use only the appearing characters shared packs', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'story-voice-'));
@@ -48,4 +44,13 @@ test('shared packs exclude mobs and non-piapro game characters; sub-characters u
     'startapp/sound/scenario/voice/part_voice_sub01/partvoice_band.mp3',
   ]);
   assert.deepEqual(sharedVoicePaths(scenario, '../partvoice_bad', characters, []), []);
+});
+
+test('missing or unsafe character metadata cannot invent shared-pack paths', () => {
+  assert.deepEqual(sharedVoicePaths({}, 'partvoice_1', [], []), []);
+  const characters = [
+    {id: 1, characterType: 'game_character', characterId: 999, assetName: 'rin', unit: 'idol'},
+    {id: 2, characterType: 'sub_character', assetName: '../other'},
+  ];
+  assert.deepEqual(sharedVoicePaths({ AppearCharacters: [1,2,3].map(Character2dId => ({Character2dId})) }, 'partvoice_1', characters, []), []);
 });
