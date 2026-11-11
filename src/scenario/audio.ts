@@ -187,6 +187,10 @@ export class AudioManager {
   private bgmUrl?: string;
   private fades = new WeakMap<HTMLAudioElement, ReturnType<typeof setTimeout>>();
 
+  private soundEffects = new Set<{
+    key: string; base: number; track?: Track; node?: AudioBufferSourceNode; gain?: GainNode;
+  }>();
+
   private voiceTrack = new Track(); // voices before the context runs
   private voiceNode?: AudioBufferSourceNode;
   private voiceToken = 0;
@@ -314,6 +318,7 @@ export class AudioManager {
     this.muted = muted;
     for (const t of this.bgmTracks) t.el.muted = muted;
     this.voiceTrack.el.muted = muted;
+    for (const se of this.soundEffects) if (se.track) se.track.el.muted = muted;
     if (this.master) this.master.gain.value = muted ? 0 : 1;
   }
 
@@ -322,6 +327,10 @@ export class AudioManager {
     const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 1));
     this.vol[kind] = v;
     if (kind === "bgm") for (const t of this.bgmTracks) this.applyBgm(t.el);
+    if (kind === "se") for (const se of this.soundEffects) {
+      if (se.gain) se.gain.gain.value = clamp01(se.base * v);
+      if (se.track) se.track.el.volume = clamp01(se.base * v);
+    }
     if (kind === "voice") {
       if (this.voiceGain) this.voiceGain.gain.value = v;
       if (this.direct) this.voiceTrack.el.volume = clamp01(this.voiceBase * v);
@@ -381,12 +390,12 @@ export class AudioManager {
     tick();
   }
   stopBgm() {
-    if (this.bgm) {
-      this.cancelFade(this.bgm.el);
-      this.bgm.stop();
-      this.bgm = undefined;
-      this.bgmUrl = undefined;
+    for (const t of this.bgmTracks) {
+      this.cancelFade(t.el);
+      t.stop();
     }
+    this.bgm = undefined;
+    this.bgmUrl = undefined;
   }
   setBgmVolume(v: number) {
     if (this.bgm) this.setBgmLevel(this.bgm.el, v);
@@ -396,27 +405,57 @@ export class AudioManager {
   playSe(urls: string[], volume = 1) {
     const c = this.clip(urls);
     if (!c) return;
+    const se: { key: string; base: number; track?: Track; node?: AudioBufferSourceNode; gain?: GainNode } = {
+      key: urls.join("\n"), base: volume,
+    };
+    this.soundEffects.add(se);
+    const finish = () => {
+      this.soundEffects.delete(se);
+      se.track?.stop();
+      se.node?.disconnect();
+      se.gain?.disconnect();
+    };
     const ctx = this.ctx;
     if (ctx?.state === "running") {
       const t0 = performance.now();
       void this.decoded(c).then((buf) => {
-        if (!buf) return console.warn("se load failed", urls[0]);
-        if (ctx.state !== "running" || performance.now() - t0 > SE_LATE) return;
-        const src = ctx.createBufferSource();
+        if (!this.soundEffects.has(se)) return;
+        if (!buf || ctx.state !== "running" || performance.now() - t0 > SE_LATE) {
+          finish();
+          return;
+        }
+        const src = se.node = ctx.createBufferSource();
         src.buffer = buf;
-        const g = ctx.createGain();
-        g.gain.value = volume * this.vol.se;
+        const g = se.gain = ctx.createGain();
+        g.gain.value = clamp01(volume * this.vol.se);
         src.connect(g).connect(this.master!);
+        src.onended = finish;
         src.start();
       });
       return;
     }
-    // before the context runs: a one-off element (what an autoplaying browser allows)
-    const a = new Track();
-    a.load(urls, () => console.warn("se load failed", urls[0]));
+    const a = se.track = new Track();
+    a.load(urls, finish);
+    a.onEnded = finish;
     a.el.muted = this.muted;
     a.el.volume = clamp01(volume * this.vol.se);
-    void a.play();
+    void a.play().then((played) => { if (!played) finish(); });
+  }
+
+  /** Stop matching SEs, including pending decodes; omit URLs to stop all. */
+  stopSe(urls?: string[]) {
+    const key = urls?.join("\n");
+    for (const se of this.soundEffects) {
+      if (key !== undefined && se.key !== key) continue;
+      this.soundEffects.delete(se);
+      se.track?.stop();
+      if (se.node) {
+        se.node.onended = null;
+        se.node.stop();
+        se.node.disconnect();
+      }
+      se.gain?.disconnect();
+    }
   }
 
   // ── voice ────────────────────────────────────────────────────────────────
@@ -503,7 +542,7 @@ export class AudioManager {
     for (const e of GESTURES) removeEventListener(e, this.unlock, { capture: true });
     this.stopVoice();
     this.stopBgm();
-    for (const t of this.bgmTracks) t.stop();
+    this.stopSe();
     this.clips.clear();
     void this.ctx?.close().catch(() => {});
   }

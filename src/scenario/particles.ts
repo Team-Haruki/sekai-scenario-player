@@ -1179,6 +1179,9 @@ type Attach = () => { x: number; y: number; scale?: number; visible: boolean } |
 export class FxManager {
   private live: { name: string; fx: FxInstance; attach?: Attach }[] = [];
   private cache = new Map<string, Promise<FxData | null>>();
+  private pending = new Set<{ name: string; attach?: Attach }>();
+  private destroyed = false;
+  private bgGeneration = 0;
 
   constructor(
     private ticker: PIXI.Ticker,
@@ -1206,7 +1209,11 @@ export class FxManager {
   // `key` names the instance for stop()/detach() (defaults to the effect name);
   // `into` puts every drawable in one container (background prefabs)
   async play(name: string, attach?: Attach, key = name, into?: PIXI.Container) {
+    if (this.destroyed) return;
+    const request = { name: key, attach };
+    this.pending.add(request);
     const data = await this.load(name);
+    if (!this.pending.delete(request) || this.destroyed) return;
     if (!data) {
       if (!into) console.warn("scenario effect missing", name);
       return;
@@ -1226,13 +1233,16 @@ export class FxManager {
 
   // StopScenarioEffect: every live instance with that name
   stop(name: string, force = false) {
+    for (const p of this.pending) if (p.name === name && !p.attach) this.pending.delete(p);
     for (const l of this.live) if (l.name === name && !l.attach) force ? l.fx.forceStop() : l.fx.stop();
   }
   // character-attached effects (hologram): ForceStop on detach
   detach(match: (attachName: string) => boolean) {
+    for (const p of this.pending) if (p.attach && match(p.name)) this.pending.delete(p);
     for (const l of this.live) if (l.attach && match(l.name)) l.fx.forceStop();
   }
   clear() {
+    for (const p of this.pending) if (p.name !== BG_KEY) this.pending.delete(p);
     for (const l of this.live) if (l.name !== BG_KEY) l.fx.forceStop();
   }
   // After a jump: the effects playing at the target, each run on first (see
@@ -1246,9 +1256,10 @@ export class FxManager {
   private bgId = "";
   private bgIndex?: Promise<Set<string>>;
   background(id: string, into: PIXI.Container) {
-    if (id === this.bgId) return;
+    if (this.destroyed || id === this.bgId) return;
+    const generation = ++this.bgGeneration;
     this.bgId = id;
-    for (const l of this.live) if (l.name === BG_KEY) l.fx.forceStop();
+    this.stop(BG_KEY, true);
     this.bgIndex ??= fetchJson<string[]>(this.url("bg/index.json"))
       .catch((e: unknown) => {
         if (!(e instanceof HttpError)) this.bgIndex = undefined; // the host failed: the next background asks again
@@ -1256,9 +1267,9 @@ export class FxManager {
       })
       .then((ids) => new Set(ids));
     void this.bgIndex.then(async (ids) => {
-      if (!ids.has(id) || this.bgId !== id) return;
+      if (this.destroyed || !ids.has(id) || this.bgGeneration !== generation) return;
       const fx = await this.play(`bg/${id}`, undefined, BG_KEY, into);
-      if (fx && this.bgId !== id) fx.forceStop(); // replaced while loading
+      if (fx && this.bgGeneration !== generation) fx.forceStop(); // replaced while loading
     });
   }
   names() {
@@ -1286,6 +1297,9 @@ export class FxManager {
   }
 
   destroy() {
+    this.destroyed = true;
+    this.pending.clear();
+    this.bgGeneration++;
     this.ticker.remove(this.tick, this);
     for (const l of this.live) l.fx.destroy();
     this.live = [];

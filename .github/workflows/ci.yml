@@ -25,6 +25,8 @@ jobs:
       node-version: "22" # engines >=22.18: server/ runs its TypeScript directly
       # `prepare` would build the library during install; the check's build step does it
       install-command: npm ci --ignore-scripts
+      test-command: npm run test:coverage
+      coverage-path: coverage/lcov.info
 
   workflows:
     name: Workflow lint
@@ -36,8 +38,7 @@ jobs:
     uses: seiunx-dev/ci-templates/.github/workflows/sonar.yml@v1
     with:
       project-version: auto
-      # There is no test/coverage suite yet; do not request nonexistent artifacts.
-      coverage-pattern: ""
+      coverage-pattern: coverage-js
       ignore-template-pins: false
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

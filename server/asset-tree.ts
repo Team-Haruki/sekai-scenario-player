@@ -9,7 +9,7 @@
 //   models/<dir>/...                 startapp/live2d/model/<dir>/... (.physics3.json → .physics3)
 //   motions/...                      startapp/live2d/motion/... (case-insensitive,
 //                                    then the costume's own motions/ folders)
-//   sound/voice/<scenario>/<v>.mp3   per-scenario voice folders
+//   sound/voice/<scenario>/<v>.mp3   per-scenario and appearing-character shared voice folders
 //   sound/{bgm,se}/<id>.mp3          scenario BGM / SE
 //   background/<id>.png              scenario backgrounds
 //   movie/<name>.mp4                 scenario movie, with Range support
@@ -18,6 +18,7 @@
 // fonts/ falls back to the Source Han Sans files shipped in this repo.
 
 import fs from "node:fs";
+import { sharedVoicePaths } from "../src/scenario/shared-voices.ts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -52,6 +53,8 @@ export interface AssetTreeOptions {
   master?: string;
   /** folder already in the player's layout; its files take precedence. */
   staged?: string;
+  /** Prepared scenarios, including stories newer than the catalog. */
+  scenarioRoot?: string;
 }
 
 // the repo's fonts/ (Source Han Sans), served as <mount>/fonts/* when not staged
@@ -60,7 +63,7 @@ const BUNDLED_FONTS = fileURLToPath(new URL("../fonts", import.meta.url));
 export type Handler = (req: IncomingMessage, res: ServerResponse, next: () => void) => void;
 
 export function assetHandler(o: AssetTreeOptions): Handler {
-  const tree = o.root ? new LiveTree(o.root, o.master) : undefined;
+  const tree = o.root ? new LiveTree(o.root, o.master, o.scenarioRoot) : undefined;
   const staged = o.staged ? path.resolve(o.staged) : undefined;
   return (req, res, next) => {
     const url = new URL(req.url || "/", "http://x");
@@ -126,10 +129,12 @@ class LiveTree {
 
   private root: string;
   private master?: string;
+  private scenarioRoot?: string;
 
-  constructor(root: string, master?: string) {
+  constructor(root: string, master?: string, scenarioRoot?: string) {
     this.root = root;
     this.master = master;
+    this.scenarioRoot = scenarioRoot ? path.resolve(scenarioRoot) : undefined;
   }
 
   private abs(rel: string) {
@@ -162,11 +167,7 @@ class LiveTree {
     }
     if ((m = rel.match(/^motions\/(.+)$/))) return this.motion(m[1]);
     if ((m = rel.match(/^sound\/voice\/([\w.-]+)\/([\w.-]+\.mp3)$/)))
-      return this.first(
-        `ondemand/sound/scenario/voice/${m[1]}/${m[2]}`,
-        `ondemand/sound/card_scenario/voice/${m[1]}/${m[2]}`,
-        `startapp/sound/scenario/voice/${m[1]}/${m[2]}`,
-      );
+      return this.voice(m[1], m[2]);
     if ((m = rel.match(/^sound\/bgm\/([\w.-]+)\.mp3$/)))
       return this.first(`ondemand/sound/scenario/bgm/${m[1]}/${m[1]}.mp3`, `startapp/sound/scenario/bgm/${m[1]}/${m[1]}.mp3`);
     if ((m = rel.match(/^sound\/se\/([\w.-]+)\.mp3$/))) return this.getSe().get(m[1]) ?? null;
@@ -187,6 +188,25 @@ class LiveTree {
       return null;
     }
     return undefined;
+  }
+
+  private voice(scenarioId: string, filename: string): string | null {
+    const direct = this.first(
+      `ondemand/sound/scenario/voice/${scenarioId}/${filename}`,
+      `ondemand/sound/card_scenario/voice/${scenarioId}/${filename}`,
+      `startapp/sound/scenario/voice/${scenarioId}/${filename}`,
+    );
+    if (direct || !filename.startsWith("partvoice_")) return direct;
+    // 7.1.0 ScenarioAssetInfo.EnqueueAssetBundles (0x4284404): shared
+    // voices are loaded for AppearCharacters, using character2ds assetName/unit.
+    // The cue suffix need not match the unit, and a speaker ID can be zero.
+    const prepared = this.scenarioRoot && safeJoin(this.scenarioRoot, `${scenarioId}/scenario.json`);
+    const scenarioFile = prepared && isFile(prepared) ? prepared : this.findScenario(scenarioId);
+    if (!scenarioFile) return null;
+    const scenario = JSON.parse(fs.readFileSync(scenarioFile, "utf8"));
+    return this.first(...sharedVoicePaths(
+      scenario, filename.slice(0, -4), this.readMaster("character2ds"), this.readMaster("gameCharacters"),
+    ));
   }
 
   // Motion / facial clip. Scenarios name clips with mixed case ("…tiltheadB")
