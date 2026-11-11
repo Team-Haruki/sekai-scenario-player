@@ -1,6 +1,7 @@
 // CRI block cues exported from ACB. Transition rules mirror
 // ScenarioAudio.SetBgmBlockIndex (7.1.0, 0x42AE650): wait for an even block,
 // pass through its following transition block, then enter the requested block.
+import { mp3LeadingSamples } from './mp3-timing';
 import { fetchBuffer, fetchJson, HttpError } from './net';
 
 export interface BgmBlock {
@@ -52,7 +53,20 @@ export async function loadBgmSequence(urls: string[], ctx: AudioContext): Promis
   const buffers = new Map<string, AudioBuffer>();
   await Promise.all(Object.entries(manifest.waves).map(async ([id, wave]) => {
     const bytes = await fetchBuffer(new URL(wave.file, new URL(base, location.href)).href, { timeoutMs: 30_000 });
-    buffers.set(id, await ctx.decodeAudioData(bytes));
+    // decodeAudioData may detach its input, so preserve metadata first.
+    const encoded = wave.file.endsWith('.mp3') ? bytes.slice(0) : undefined;
+    const decoded = await ctx.decodeAudioData(bytes);
+    if (!encoded) { buffers.set(id, decoded); return; }
+    const offset = encoded ? mp3LeadingSamples(encoded, decoded.length, decoded.sampleRate) : 0;
+    const length = Math.min(decoded.length - offset, Math.round(wave.duration * decoded.sampleRate));
+    if (length <= 0) throw new Error('Invalid decoded BGM waveform');
+    if (!offset && length === decoded.length) buffers.set(id, decoded);
+    else {
+      const trimmed = ctx.createBuffer(decoded.numberOfChannels, length, decoded.sampleRate);
+      for (let ch = 0; ch < decoded.numberOfChannels; ch++)
+        trimmed.copyToChannel(decoded.getChannelData(ch).subarray(offset, offset + length), ch);
+      buffers.set(id, trimmed);
+    }
   }));
   return { manifest, buffers };
 }
