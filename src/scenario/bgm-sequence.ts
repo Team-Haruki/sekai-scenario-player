@@ -121,7 +121,9 @@ export function blockVisits(m: BgmSequence, duration: number, changes: readonly 
     return [t + b.duration - from, repeats ? i : b.next ?? i + 1];
   };
   let [end, next] = exit(index, start, offset);
-  for (let step = 0; step < 20_000; step++) {
+  // The plan is rebuilt from time 0 on every tick, so only guard against visits that
+  // stop advancing time; a long session legitimately has many visits.
+  for (let stalled = 0; stalled < 1_000;) {
     if (start >= duration || index >= blocks.length) return visits;
     while (command < commands.length && commands[command].t < Math.min(end, duration) - EPS) {
       const c = commands[command++];
@@ -130,6 +132,7 @@ export function blockVisits(m: BgmSequence, duration: number, changes: readonly 
       if (pending.phase === 'transition') { [end, beat] = transitionAt(blocks[index], start, c.t, offset); next = index + 1; }
     }
     const actualEnd = Math.min(end, duration);
+    stalled = actualEnd - start > EPS ? 0 : stalled + 1;
     visits.push(offset > EPS ? { block: index, start, end: actualEnd, offset } : { block: index, start, end: actualEnd });
     if (actualEnd >= duration) return visits;
     const old = index;
@@ -150,15 +153,28 @@ export function blockVisits(m: BgmSequence, duration: number, changes: readonly 
 
 export function waveformNotes(m: BgmSequence, visits: BlockVisit[]): BgmNote[] {
   const notes: BgmNote[] = [];
-  for (const v of visits) m.blocks[v.block].events.forEach((e, i) => {
-    // Entered mid-block: notes still sounding at the entry point continue from there.
-    const from = v.offset ?? 0, length = m.waves[e.wave].duration;
-    const into = Math.max(0, from - e.at);
-    if (into >= length - EPS) return;
-    const start = v.start + e.at - from + into;
-    if (start < v.end - EPS) notes.push({ key: `${v.block}:${v.start}:${i}`, start,
-      stop: start + length - into, wave: e.wave, gain: e.gain, group: e.group || '', offset: into });
-  });
+  for (const v of visits) {
+    // Entered mid-block (beat-synchronised entry): the block's own timeline before the
+    // entry point still decides which notes are sounding there, including voice-group
+    // replacements, and those notes continue from the entry point.
+    const from = v.offset ?? 0;
+    const local = m.blocks[v.block].events.map((e, i) => ({ e, i, stop: e.at + m.waves[e.wave].duration }));
+    if (from > EPS) {
+      const last = new Map<string, (typeof local)[number]>();
+      for (const n of [...local].sort((a, b) => a.e.at - b.e.at)) {
+        if (!n.e.group || n.e.at >= from - EPS) continue;
+        const old = last.get(n.e.group);
+        if (old) old.stop = Math.min(old.stop, n.e.at);
+        last.set(n.e.group, n);
+      }
+    }
+    for (const { e, i, stop } of local) {
+      if (stop <= from + EPS) continue;
+      const start = v.start + Math.max(e.at, from) - from;
+      if (start < v.end - EPS) notes.push({ key: `${v.block}:${v.start}:${i}`, start, stop: v.start + stop - from,
+        wave: e.wave, gain: e.gain, group: e.group || '', offset: Math.max(0, from - e.at) });
+    }
+  }
   notes.sort((a, b) => a.start - b.start);
   const active = new Map<string, BgmNote>();
   for (const note of notes) if (note.group) {

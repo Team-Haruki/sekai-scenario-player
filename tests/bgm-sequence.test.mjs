@@ -173,3 +173,21 @@ test('scheduler starts a continuing note inside its waveform', () => {
     assert.deepEqual(player.aisac, []);
   } finally { player.stop(); }
 });
+test('a voice-group replacement before the entry point is resolved before notes continue', () => {
+  const m = syncCue();
+  // In the destination, b (8 s) is replaced at 1 s by a (4 s): neither sounds at the entry beat 4,
+  // except a, which still lasts until 5.
+  m.blocks[3].events = [{ at: 0, wave: 'b', gain: 1, group: 'IM_001' }, { at: 1, wave: 'a', gain: 1, group: 'IM_001' }];
+  let notes = waveformNotes(m, blockVisits(m, 16, [{ t: 5, index: 4 }])).filter(n => n.key.startsWith('3:'));
+  assert.deepEqual(notes.map(n => [n.wave, n.start, n.stop, n.offset]), [['a', 8, 9, 3]]);
+  m.waves.c = { file: 'c.wav', duration: 2 };
+  m.blocks[3].events[1].wave = 'c'; // the replacement ended before the entry point too
+  notes = waveformNotes(m, blockVisits(m, 16, [{ t: 5, index: 4 }])).filter(n => n.key.startsWith('3:'));
+  assert.deepEqual(notes, []);
+});
+test('long sessions of short looping blocks keep planning', () => {
+  const visits = blockVisits(cue([block(.1, true)]), 3600);
+  assert.ok(Math.abs(visits.length - 36000) <= 1, String(visits.length));
+  assert.equal(visits.at(-1).end, 3600);
+  assert.throws(() => blockVisits(cue([block(0, true)]), 1), /progress/);
+});
