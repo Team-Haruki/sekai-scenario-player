@@ -203,7 +203,12 @@ class LiveTree {
     const prepared = this.scenarioRoot && safeJoin(this.scenarioRoot, `${scenarioId}/scenario.json`);
     const scenarioFile = prepared && isFile(prepared) ? prepared : this.findScenario(scenarioId);
     if (!scenarioFile) return null;
-    const scenario = JSON.parse(fs.readFileSync(scenarioFile, "utf8"));
+    let scenario: { AppearCharacters?: { Character2dId: number }[] };
+    try {
+      scenario = JSON.parse(fs.readFileSync(scenarioFile, "utf8"));
+    } catch {
+      return null; // unreadable scenario: the voice is missing, the server keeps running
+    }
     return this.first(...sharedVoicePaths(
       scenario, filename.slice(0, -4), this.readMaster("character2ds"), this.readMaster("gameCharacters"),
     ));

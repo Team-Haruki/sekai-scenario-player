@@ -54,3 +54,44 @@ test('missing or unsafe character metadata cannot invent shared-pack paths', () 
   ];
   assert.deepEqual(sharedVoicePaths({ AppearCharacters: [1,2,3].map(Character2dId => ({Character2dId})) }, 'partvoice_1', characters, []), []);
 });
+
+test('sub characters are found by their own type, whatever their characterId collides with', () => {
+  // The master data's rows: a sub character's characterId counts sub characters,
+  // so 1 and 22 here are not Ichika and Rin.
+  const characters = [
+    {id: 900, characterType: 'sub_game_character', characterId: 1, unit: 'none', assetName: 'v2_sub_sanrio_kitty'},
+    {id: 901, characterType: 'sub_game_character', characterId: 22, unit: 'none', assetName: 'v2_sub_sanrio_pompompurin'},
+    {id: 902, characterType: 'sub_game_character', characterId: 204, unit: 'none'},
+  ];
+  const games = [{id: 1, unit: 'light_sound'}, {id: 22, unit: 'piapro'}];
+  const scenario = { AppearCharacters: [900, 901, 902].map(Character2dId => ({Character2dId})) };
+  assert.deepEqual(sharedVoicePaths(scenario, 'partvoice_01_900', characters, games), [
+    'startapp/sound/scenario/voice/part_voice_v2_sub_sanrio_kitty/partvoice_01_900.mp3',
+    'startapp/sound/scenario/voice/part_voice_v2_sub_sanrio_pompompurin/partvoice_01_900.mp3',
+  ]);
+});
+
+test('a virtual singer row without an asset name or a unit names no pack', () => {
+  const characters = [
+    {id: 1, characterType: 'game_character', characterId: 21, unit: 'piapro'},
+    {id: 2, characterType: 'game_character', characterId: 21, assetName: '21miku'},
+    {id: 3, characterType: 'game_character', characterId: 21, assetName: '21miku', unit: 'street'},
+  ];
+  const scenario = { AppearCharacters: [1, 2, 3].map(Character2dId => ({Character2dId})) };
+  assert.deepEqual(sharedVoicePaths(scenario, 'partvoice_1', characters, [{id: 21, unit: 'piapro'}]), [
+    'tutorial/sound/scenario/part_voice/21miku_street/partvoice_1.mp3',
+    'startapp/sound/scenario/voice/part_voice_21miku_street/partvoice_1.mp3',
+  ]);
+});
+
+test('a scenario file that cannot be read is a missing voice, not a crash', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'story-voice-'));
+  const put = (p, data) => { const f = path.join(root,p); fs.mkdirSync(path.dirname(f),{recursive:true}); fs.writeFileSync(f,data); };
+  put('jobs/story/scenario.json', '{ not json');
+  const handler = assetHandler({root, master: path.join(root,'master'), scenarioRoot: path.join(root,'jobs')});
+  const server = createServer((req,res) => handler(req,res,()=>{res.statusCode=404;res.end();}));
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  try {
+    assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/sound/voice/story/partvoice_1.mp3`)).status, 404);
+  } finally {server.closeAllConnections(); await new Promise(r=>server.close(()=>r())); fs.rmSync(root,{recursive:true});}
+});
