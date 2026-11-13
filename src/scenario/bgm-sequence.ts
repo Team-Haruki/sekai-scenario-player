@@ -305,7 +305,10 @@ export class BlockBgmPlayer {
         resolve();
       };
       this.startTimer = setTimeout(begin, START_WAIT);
-      void this.prepared.load(this.window(0).wanted).then(begin, begin);
+      // wait for the waves of the first notes only; the rest of the window loads meanwhile
+      const { notes, wanted } = this.plan(0);
+      void this.prepared.load(new Set(notes.filter(n => n.start < LOOKAHEAD).map(n => n.wave))).then(begin, begin);
+      void this.prepared.load(wanted);
     });
   }
 
@@ -328,23 +331,25 @@ export class BlockBgmPlayer {
     this.tick();
   }
 
-  /** The plan up to WINDOW after `elapsed`, and the waves of the blocks playing in that time. */
-  private window(elapsed: number) {
+  /**
+   * The notes up to WINDOW after `elapsed`, and the waves of those that have not ended:
+   * a note can sound on after its block, so the waves are not those of the blocks.
+   */
+  private plan(elapsed: number) {
     const m = this.prepared.manifest;
-    const visits = blockVisits(m, elapsed + WINDOW, this.changes, this.initial);
+    const notes = waveformNotes(m, blockVisits(m, elapsed + WINDOW, this.changes, this.initial));
     const wanted = new Set<string>();
-    for (const v of visits) if (v.end > elapsed) for (const e of m.blocks[v.block].events) wanted.add(e.wave);
-    return { visits, wanted };
+    for (const n of notes) if (n.stop > elapsed) wanted.add(n.wave);
+    return { notes, wanted };
   }
 
   private tick = () => {
     clearTimeout(this.timer);
     if (this.stopped) return;
     const now = this.ctx.currentTime, elapsed = Math.max(0, now - this.origin);
-    const { visits, wanted } = this.window(elapsed);
+    const { notes, wanted } = this.plan(elapsed);
     this.prepared.keep(wanted);
     void this.prepared.load(wanted);
-    const notes = waveformNotes(this.prepared.manifest, visits);
     const planned = new Map(notes.map(n => [n.key, n]));
     for (const [key, node] of this.nodes) {
       const note = planned.get(key);

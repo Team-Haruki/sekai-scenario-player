@@ -208,9 +208,11 @@ test('the scheduler asks for the waves of the coming blocks only and lets the ot
   const { player, prepared } = graph(m);
   try {
     await player.start(1, 0);
-    assert.deepEqual([...prepared.load.mock.calls[0][0]], ['a', 'b']); // block 4 is not reached by itself
+    assert.deepEqual(prepared.load.mock.calls.slice(0, 2).map(([ids]) => [...ids]), [['a'], ['a', 'b']]); // the first notes, then the window; block 4 is not reached by itself
     vi.advanceTimersByTime(4500);
-    assert.deepEqual([...prepared.keep.mock.calls.at(-1)[0]], ['b']); // the intro is over
+    assert.deepEqual([...prepared.keep.mock.calls.at(-1)[0]], ['a', 'b']); // the intro's last note sounds on into the loop
+    vi.advanceTimersByTime(2000);
+    assert.deepEqual([...prepared.keep.mock.calls.at(-1)[0]], ['b']);
     assert.equal(player.block, 0);
     player.setBlock(4); // through the transition block 3
     assert.deepEqual([...prepared.keep.mock.calls.at(-1)[0]].sort(), ['a', 'b', 'c']);
@@ -230,16 +232,31 @@ test('a wave decoded late joins inside its waveform', async () => {
     assert.ok(Math.abs(at - 1.1) < 1e-6 && Math.abs(offset - 1.05) < 1e-6, `${at} ${offset}`);
   } finally { player.stop(); }
 });
+test('a wave that outlasts its block is still wanted, and joins when it is decoded after the block', async () => {
+  const { player, sources, prepared } = graph(twoWaves()); // a: 4 s in a 2 s block, then b
+  try {
+    prepared.buffers.delete('a');
+    await player.start(1, 0);
+    vi.advanceTimersByTime(3000);
+    assert.ok(prepared.keep.mock.calls.at(-1)[0].has('a'));
+    prepared.buffers.set('a', { duration: 4 });
+    vi.advanceTimersByTime(100);
+    const late = sources.at(-1).start.mock.calls[0];
+    assert.ok(Math.abs(late[1] - 3.05) < 1e-6, String(late));
+    vi.advanceTimersByTime(1500);
+    assert.deepEqual([...prepared.keep.mock.calls.at(-1)[0]], ['b']);
+  } finally { player.stop(); }
+});
 test('a cue starts in the block it is given, once its first waves are there or after the wait', async () => {
   const { player, sources, prepared, gains } = graph(twoWaves());
-  let loaded; prepared.load.mockImplementation(() => new Promise(r => { loaded = r; }));
+  const pending = []; prepared.load.mockImplementation(() => new Promise(r => { pending.push(r); }));
   try {
     const started = player.start(.7, 250, 1);
     assert.deepEqual([...prepared.load.mock.calls[0][0]], ['b']);
     player.setBlock(0); // a change before the first note counts from time 0
     vi.advanceTimersByTime(1000);
     assert.equal(sources.length, 0);
-    loaded(); await started;
+    pending[0](); await started; // the first notes' waves; the rest of the window is still loading
     assert.deepEqual(sources[0].start.mock.calls[0], [1.05, 0]);
     assert.deepEqual(gains[0].gain.linearRampToValueAtTime.mock.calls[0], [.7, 1.3]);
     assert.throws(() => player.start(1, 0, 9), /Invalid/);
