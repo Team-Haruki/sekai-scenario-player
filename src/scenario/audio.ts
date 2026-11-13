@@ -421,6 +421,7 @@ export class AudioManager {
       void this.decoded(c).then((buf) => {
         if (!this.soundEffects.has(se)) return;
         if (!buf || ctx.state !== "running" || performance.now() - t0 > SE_LATE) {
+          if (!buf) console.warn("se load failed", urls[0]);
           finish();
           return;
         }
@@ -435,7 +436,10 @@ export class AudioManager {
       return;
     }
     const a = se.track = new Track();
-    a.load(urls, finish);
+    a.load(urls, () => {
+      console.warn("se load failed", urls[0]);
+      finish();
+    });
     a.onEnded = finish;
     a.el.muted = this.muted;
     a.el.volume = clamp01(volume * this.vol.se);
