@@ -729,7 +729,7 @@ export class PjskPlayer {
     }
     if (this.session !== session) return;
     // no autoplay permission: load the models now, start on the click
-    void player.preload();
+    void player.preload().catch(e => { if (this.session === session) this.fail(e as Error); });
     this.loadingEl.hidden = true;
     this.statusEl.textContent = "";
     this.startBtn.hidden = false;

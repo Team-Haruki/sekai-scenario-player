@@ -95,3 +95,20 @@ test('a scenario file that cannot be read is a missing voice, not a crash', asyn
     assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/sound/voice/story/partvoice_1.mp3`)).status, 404);
   } finally {server.closeAllConnections(); await new Promise(r=>server.close(()=>r())); fs.rmSync(root,{recursive:true});}
 });
+
+test('a block cue is served from the exporter folder beside its flat track', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'story-bgm-'));
+  const put = (p, data) => { const f = path.join(root,p); fs.mkdirSync(path.dirname(f),{recursive:true}); fs.writeFileSync(f,data); };
+  put('ondemand/sound/scenario/bgm/bgm1/bgm1.sequence/sequence.json', '{"version":1}');
+  put('startapp/sound/scenario/bgm/bgm2/bgm2.sequence/wave-0a.mp3', 'x');
+  const handler = assetHandler({root, master: path.join(root,'master')});
+  const server = createServer((req,res) => handler(req,res,()=>{res.statusCode=404;res.end();}));
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const get = p => fetch(`http://127.0.0.1:${server.address().port}/${p}`);
+  try {
+    assert.deepEqual(await (await get('bgm/bgm1/sequence.json')).json(), {version:1});
+    const wave = await get('bgm/bgm2/wave-0a.mp3');
+    assert.equal(wave.status, 200); assert.equal(wave.headers.get('content-type'), 'audio/mpeg');
+    assert.equal((await get('bgm/bgm3/sequence.json')).status, 404);
+  } finally {server.closeAllConnections(); await new Promise(r=>server.close(()=>r())); fs.rmSync(root,{recursive:true});}
+});

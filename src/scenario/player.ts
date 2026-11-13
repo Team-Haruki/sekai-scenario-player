@@ -49,6 +49,7 @@ const AUTO_POST_VOICE = 500; // after the voice clip ends
 const VOICE_CAP = 30000; // give up waiting for a voice after this
 const PREFETCH_TALKS = 3; // lines ahead whose voices, SEs and backgrounds are fetched
 const FIRST_VOICE_WAIT = 5000; // playback waits this long at most for the first line's voice
+const BGM_SEQUENCE_WAIT = 4000; // and this long for the BGM cues' block sequence descriptors
 // 早送り: in-game capture advances a line every ~0.5-1s with the text shown at once.
 const FAST_SCALE = 3;
 const FAST_PAGE_HOLD = 500 * FAST_SCALE; // → 0.5s real time at FAST_SCALE
@@ -66,6 +67,7 @@ interface ReplayState {
   bg: string;
   bgm: string;
   bgmVolume?: number;
+  bgmBlock?: number;
   layoutMode: number;
   fade: RGBA;
   colorEffect?: ColorEffect;
@@ -119,6 +121,7 @@ export class ScenarioPlayer {
   private finished?: () => void; // resolves run() when the live run reaches the end
   private stopped = false;
   private preloading?: Promise<void>;
+  private bgmVolumeTween = 0; // the BgmVolume fade in charge
   private executeSnippets = new Map<Snippet, InFlight>();
   private skipMode = false;
   private inputtedWaitSkip = false;
@@ -206,6 +209,7 @@ export class ScenarioPlayer {
 
   private async playFrom(start: number, gen: number) {
     if (start === 0) {
+      this.audio.setBgmVolume(1);
       if (this.scn.FirstBgm) this.audio.playBgm(this.assets.bgm(this.scn.FirstBgm), 0.7);
       for (const l of this.scn.FirstLayout || []) {
         await this.stage.appear(
@@ -243,7 +247,20 @@ export class ScenarioPlayer {
   preload() {
     this.prefetchAhead(0);
     const first = this.waitForAll ? new Set(this.scn.AppearCharacters.map((c) => c.CostumeType)) : earlyCostumes(this.scn);
-    return (this.preloading ??= this.stage.preloadAll(this.scn.AppearCharacters, first, (p) => this.onLoadProgress?.(p)));
+    return (this.preloading ??= Promise.all([
+      this.stage.preloadAll(this.scn.AppearCharacters, first, (p) => this.onLoadProgress?.(p)),
+      this.prepareBgm(),
+    ]).then(() => {}));
+  }
+
+  // The block sequences of the scenario's BGM cues, where the asset tree has
+  // them. The first line waits for the descriptors only, and not for long:
+  // a cue whose descriptor is late or missing plays its flat track.
+  private async prepareBgm() {
+    const ids = new Set([this.scn.FirstBgm, ...this.scn.SoundData.map((s) => s.Bgm)].filter((id) => id && id !== "bgm00000"));
+    const cues = [...ids].map((id) => ({ urls: this.assets.bgm(id), manifests: this.assets.bgmSequence?.(id) ?? [] }));
+    this.audio.retainBgm(cues.map((c) => c.urls));
+    await withTimeout(Promise.all(cues.map((c) => this.audio.prepareBgm(c.urls, c.manifests))), BGM_SEQUENCE_WAIT, undefined);
   }
 
   private firstVoice(): Promise<void> {
@@ -291,6 +308,8 @@ export class ScenarioPlayer {
     this.audio.stopVoice();
     this.audio.stopSe();
     this.audio.stopBgm();
+    this.bgmVolumeTween++;
+    this.audio.setBgmVolume(1);
     this.dialogue.reset();
     this.effects.reset([0, 0, 0, 0]);
     const f = this.finished;
@@ -325,9 +344,10 @@ export class ScenarioPlayer {
     this.effects.reset(st.fade, st.sideCover);
     this.stage.setColorEffect(st.colorEffect);
     this.stage.setAmbient(st.ambient);
-    if (st.bgm) this.audio.playBgm(this.assets.bgm(st.bgm), 0.7, 0);
+    if (st.bgm) this.audio.restoreBgm(this.assets.bgm(st.bgm), 0.7, st.bgmBlock ?? 0);
     else this.audio.stopBgm();
-    if (st.bgmVolume != null) this.audio.setBgmVolume(st.bgmVolume);
+    this.bgmVolumeTween++;
+    this.audio.setBgmVolume(st.bgmVolume ?? 1);
     await Promise.all(
       [...st.chars].map(([id, c]) =>
         this.stage.place(id, c.costume, c.side, c.offsetX, c.motion, c.facial, c.visible),
@@ -478,8 +498,10 @@ export class ScenarioPlayer {
         case Action.Sound: {
           const so = scn.SoundData[s.ReferenceIndex];
           if (!so) break;
-          if ((so.PlayMode === SoundPlayMode.CrossFade || so.PlayMode === SoundPlayMode.Stack) && so.Bgm)
+          if ((so.PlayMode === SoundPlayMode.CrossFade || so.PlayMode === SoundPlayMode.Stack) && so.Bgm) {
+            if (st.bgm !== so.Bgm) st.bgmBlock = undefined;
             st.bgm = so.Bgm;
+          } else if (so.PlayMode === SoundPlayMode.BgmAisacIndex) st.bgmBlock = so.BgmBlockIndex;
           else if (so.PlayMode === SoundPlayMode.BgmVolume) st.bgmVolume = so.Volume;
           break;
         }
@@ -889,9 +911,25 @@ export class ScenarioPlayer {
         // game mode 3 stops the named SE via playSEDict.
         if (s.Se) this.audio.stopSe(this.assets.se(s.Se));
         return;
-      case SoundPlayMode.BgmVolume:
-        this.audio.setBgmVolume(s.Volume);
+      case SoundPlayMode.BgmAisacVolume:
+        this.audio.setBgmAisac(s.Volume);
         return;
+      case SoundPlayMode.BgmAisacIndex:
+        this.audio.setBgmBlockIndex(s.BgmBlockIndex);
+        return;
+      case SoundPlayMode.BgmVolume: {
+        // over Duration, on the timeline clock; a newer BgmVolume takes over
+        const token = ++this.bgmVolumeTween;
+        void this.clock.tween(
+          Math.max(0, s.Duration || 0) * 1000,
+          this.audio.bgmVolume,
+          s.Volume,
+          (v) => this.audio.setBgmVolume(v),
+          undefined,
+          () => token === this.bgmVolumeTween,
+        );
+        return;
+      }
       default:
         return;
     }

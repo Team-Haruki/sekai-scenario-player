@@ -52,6 +52,8 @@ export interface AssetResolver {
   /** A motion3 clip of the costume (`kind` = body motion or facial); `null` = the costume has none. */
   motion(entry: ModelManifestEntry, kind: "motion" | "facial", name: string, ctx: LoadContext): string | null;
   bgm(id: string, ctx: LoadContext): AssetUrls;
+  /** Optional CRI block sequence manifest; waves are relative to this URL. */
+  bgmSequence?(id: string, ctx: LoadContext): AssetUrls;
   se(id: string, ctx: LoadContext): AssetUrls;
   /** `info` names the speaker, for trees that file voices by character. */
   voice(scenarioId: string, voiceId: string, ctx: LoadContext, info: VoiceInfo): AssetUrls;
@@ -82,6 +84,7 @@ export function createAssetResolver(base: string, overrides: Partial<AssetResolv
     model: (m) => `${b}${m.modelDir}/${m.modelFile}`,
     motion: (m, kind, name) => `${b}motions/${m.motionDir}/${m.motionBase}/${kind}/${name}.motion3.json`,
     bgm: (id) => `${b}sound/bgm/${enc(id)}.mp3`,
+    bgmSequence: (id) => `${b}bgm/${enc(id)}/sequence.json`,
     se: (id) => `${b}sound/se/${enc(id)}.mp3`,
     voice: (scenarioId, voiceId) => `${b}sound/voice/${enc(scenarioId)}/${enc(voiceId)}.mp3`,
     background: (id) => `${b}background/${enc(id)}.png`,
@@ -101,6 +104,7 @@ export interface EpisodeAssets {
   physics(entry: ModelManifestEntry): string | null | undefined;
   motion(entry: ModelManifestEntry, kind: "motion" | "facial", name: string): string | null;
   bgm(id: string): string[];
+  bgmSequence?(id: string): string[];
   se(id: string): string[];
   voice(scenarioId: string, voiceId: string, info?: VoiceInfo): string[];
   background(id: string): string[];
@@ -129,6 +133,7 @@ export function bindAssets(r: AssetResolver, ctx: LoadContext, chosen?: Readonly
     physics: (m) => r.physics?.(m, ctx),
     motion: (m, kind, name) => r.motion(m, kind, name, ctx),
     bgm: (id) => pick(r.bgm(id, ctx)),
+    bgmSequence: (id) => list(r.bgmSequence?.(id, ctx) ?? null),
     se: (id) => pick(r.se(id, ctx)),
     voice: (s, v, info = {}) => pick(r.voice(s, v, ctx, info)),
     background: (id) => pick(r.background(id, ctx)),

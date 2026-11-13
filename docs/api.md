@@ -211,6 +211,7 @@ Members and what they return:
 | `physics?(entry, ctx)` | optional: a physics file to use instead of the model3's reference, or `null` to drop physics |
 | `motion(entry, kind, name, ctx)` | a motion3 URL, or `null` when the costume has no such clip (it is skipped) |
 | `bgm(id, ctx)`, `se(id, ctx)`, `voice(scenarioId, voiceId, ctx, info)`, `background(id, ctx)` | `AssetUrls`: one URL, or candidate URLs tried in order until one loads; `null` / `[]` skips the asset. `info.character2dId` is the speaker of a voice (absent for full-screen text), for trees that file voices by character |
+| `bgmSequence?(id, ctx)` | optional: candidate URLs of the cue's block-sequence descriptor (`sequence.json`, its waveforms beside it), or `null` when the host has none. A cue without a descriptor plays the `bgm` track; see [Block-sequence BGM](assets.md#block-sequence-bgm) |
 | `movie(name, ctx)` | a URL, or `null` to skip the movie |
 | `fallback?(url)` | optional: the same file on another host, tried when `url`'s host fails (see [Fallback host](#fallback-host)); `null` / `undefined` for none |
 
