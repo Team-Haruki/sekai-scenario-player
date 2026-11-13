@@ -66,6 +66,12 @@ class Track {
   private primed = false;
   /** play() was asked for: unlock() retries it after a refusal. */
   wanted = false;
+  /**
+   * A source failed to load and the track is on to its fallback or its next
+   * candidate. The browser rejects the play() of the failed source right
+   * after its error event: that rejection is not a refusal.
+   */
+  failing = false;
   onEnded?: () => void;
 
   constructor() {
@@ -100,6 +106,7 @@ class Track {
   // file is missing), otherwise the next candidate, otherwise give up.
   private async onError() {
     if (!this.urls.length) return; // stopped, or the priming clip
+    this.failing = true;
     clearTimeout(this.stall);
     const load = this.loads;
     const failedSrc = this.src[this.j];
@@ -129,6 +136,7 @@ class Track {
     this.j = 0;
     this.failed = failed;
     this.wanted = false;
+    this.failing = false;
     if (urls.length) this.setSrc();
     else queueMicrotask(() => failed?.());
   }
@@ -147,6 +155,7 @@ class Track {
     clearTimeout(this.stall);
     this.urls = [];
     this.wanted = false;
+    this.failing = false;
     this.onEnded = undefined;
     this.el.pause();
   }
@@ -421,6 +430,7 @@ export class AudioManager {
       void this.decoded(c).then((buf) => {
         if (!this.soundEffects.has(se)) return;
         if (!buf || ctx.state !== "running" || performance.now() - t0 > SE_LATE) {
+          if (!buf) console.warn("se load failed", urls[0]);
           finish();
           return;
         }
@@ -435,11 +445,17 @@ export class AudioManager {
       return;
     }
     const a = se.track = new Track();
-    a.load(urls, finish);
+    a.load(urls, () => {
+      console.warn("se load failed", urls[0]);
+      finish();
+    });
     a.onEnded = finish;
     a.el.muted = this.muted;
     a.el.volume = clamp01(volume * this.vol.se);
-    void a.play().then((played) => { if (!played) finish(); });
+    // A refusal (no gesture yet) ends this one-off element. A source that
+    // failed to load is the track's to handle: it tries the fallback host and
+    // the next candidate, and reports through the callback above if none plays.
+    void a.play().then((played) => { if (!played && !a.failing) finish(); });
   }
 
   /** Stop matching SEs, including pending decodes; omit URLs to stop all. */

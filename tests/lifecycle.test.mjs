@@ -193,6 +193,46 @@ test('refused direct audio playback does not remain active', async () => {
     assert.equal(audio.soundEffects.size, 0);
   } finally { play.mockRestore(); audio.destroy(); }
 });
+test('a direct SE whose first source fails to load moves to the next one instead of being dropped', async () => {
+  const audio = new AudioManager();
+  audio.clip = () => ({});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  // The browser fires the element's error event, then rejects the play() of the failed source.
+  const listen = vi.spyOn(FakeAudio.prototype, 'addEventListener').mockImplementation(function (type, fn) { (this.listeners ??= {})[type] = fn; });
+  let plays = 0;
+  const play = vi.spyOn(FakeAudio.prototype, 'play').mockImplementation(function () {
+    plays += 1;
+    if (plays > 1) { this.paused = false; return Promise.resolve(); }
+    this.listeners.error();
+    return Promise.reject(new Error('NotSupportedError'));
+  });
+  try {
+    audio.playSe(['missing.mp3', 'bell.mp3']);
+    await new Promise(r => setTimeout(r, 5));
+    assert.equal(plays, 2);
+    assert.equal(audio.soundEffects.size, 1);
+    const track = [...audio.soundEffects][0].track;
+    assert.match(track.el.src, /bell\.mp3$/);
+    assert.equal(track.el.paused, false);
+    assert.equal(warn.mock.calls.length, 0);
+  } finally { play.mockRestore(); listen.mockRestore(); warn.mockRestore(); audio.destroy(); }
+});
+test('a direct SE with no source left warns and is released', async () => {
+  const audio = new AudioManager();
+  audio.clip = () => ({});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const listen = vi.spyOn(FakeAudio.prototype, 'addEventListener').mockImplementation(function (type, fn) { (this.listeners ??= {})[type] = fn; });
+  const play = vi.spyOn(FakeAudio.prototype, 'play').mockImplementation(function () {
+    this.listeners.error();
+    return Promise.reject(new Error('NotSupportedError'));
+  });
+  try {
+    audio.playSe(['missing.mp3']);
+    await new Promise(r => setTimeout(r, 5));
+    assert.equal(audio.soundEffects.size, 0);
+    assert.deepEqual(warn.mock.calls, [['se load failed', 'missing.mp3']]);
+  } finally { play.mockRestore(); listen.mockRestore(); warn.mockRestore(); audio.destroy(); }
+});
 for (const operation of ['stop', 'jump']) {
   test(`scenario ${operation} cuts active SEs and cancels scheduled SEs`, async () => {
     const audio = new AudioManager();
