@@ -25,6 +25,9 @@ src/
    │                     full-screen text, choices)
    ├─ particles.ts       particle runtime (subset of Unity Shuriken + UI Image / Animator)
    ├─ audio.ts           BGM crossfades, SE and voice clips fetched ahead (Web Audio; the analyser drives lip-sync), gesture unlock
+   ├─ bgm-sequence.ts    CRI block cues: the block plan (blockVisits), its notes, and the scheduler on the audio clock;
+   │                     waves are fetched and decoded as their blocks come up (see docs/assets.md)
+   ├─ mp3-timing.ts      an MP3 wave's encoder delay, for decoders that keep it
    ├─ player.ts          ★ timeline engine and action handlers, jumps, fast-forward
    ├─ clock.ts           per-player clock every wait and tween goes through
    ├─ menu.ts            the ⋯ story menu (ScenarioMenu)
@@ -90,7 +93,7 @@ Keep this model when changing handlers. Every wait and tween must go through `cl
 - **Sound (7)**:
   - `CrossFade` / `Stack`: BGM crossfades over Duration; SE plays after a Duration delay.
   - `SpecialSePlay`: plays an SE at the snippet's Volume.
-  - `BgmVolume`.
+  - `BgmVolume`: a level of its own that stays across cue changes, faded over Duration on the clock.
   - `BgmAisacIndex` (6): block BGM change through `ScenarioAudio.SetBgmBlockIndex` (wait for an even block, pass its transition block, enter the target); see `bgm-sequence.ts`. Block rules follow the CRI Atom runtime of 7.1.0: a requested beat transition out of a `transitionMode: 1` block that leaves on beat *k* enters a beat-synchronised destination with more than *k* divisions at its own beat *k*, and notes already sounding there continue mid-wave; a block with `next` jumps there when it ends.
 - **CharacterLayoutMode (8)**: switches between the two- and three-character layouts, re-placing and re-scaling characters.
 - **Positions**: anchored X on the 1920-wide reference canvas: ±360 in the two-character layout, ±576 in the three-character one, ±1779 for the off-screen slots; scales 1.0 / 0.9. From `ScenarioCharacterLayoutMap.Initialize`.

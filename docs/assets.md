@@ -141,23 +141,34 @@ upgrading the library alone cannot supply these game assets.
 
 ### Block-sequence BGM
 
-CRI block cues need an ACB-derived `bgm/<cue>/sequence.json` plus its decoded
-waveforms. Keep the normal MP3s: flat BGM still uses them. The optional
-`AssetResolver.bgmSequence` returns the descriptor URL; the default resolver
-looks under `bgm/<cue>/sequence.json`. Custom hosts may return null for cues
-without a descriptor. A scenario containing a block-change command fails
-preparation if its sequence is absent, rather than silently playing the flat MP3.
+A CRI block cue (interactive music: an intro, looping sections, transitions) is
+exported twice: as the normal flat MP3, and as a `sequence.json` descriptor with
+one waveform per note. The optional `AssetResolver.bgmSequence(id, ctx)` returns
+the descriptor's candidate URLs; the waveforms are files next to it. The default
+resolver looks at `bgm/<cue>/sequence.json`, which the asset server maps to the
+exporter's `…/sound/scenario/bgm/<cue>/<cue>.sequence/` folder. Return `null` for
+a host without descriptors: every BGM then plays its flat MP3, as before.
 
-The version 1 descriptor contains `cue`, `waves` (file and duration), and `blocks`
-(duration, loop/loopCount, transition, divisions and note events). Events specify
-`at`, `wave`, `gain` and an optional `IM_001` or `IM_002` one-voice group. Wave
-paths are local filenames relative to the descriptor. See the synthetic fixtures
-in `tests/bgm-sequence.test.mjs`; game data and decoded audio stay outside git.
+The player asks for the descriptor of each BGM cue of a scenario while it loads
+(a 404 means the cue is an ordinary track). A cue whose descriptor is missing,
+late, unreachable or of an unknown version plays its flat MP3 and block changes
+on it are ignored with a console warning; a descriptor never fails the load.
+Waveforms are fetched and decoded as their blocks come up and dropped again
+afterwards, because a whole cue decoded at once can take hundreds of megabytes.
+Block BGM is scheduled on the Web Audio clock, so it is silent until the first
+tap or click has started the audio context.
+
+The version 1 descriptor contains `cue`, `waves` (file and duration), `blocks`
+(duration, loop/loopCount, transition, divisions, the optional `transitionMode`
+and `next`, and note events) and an optional `aisac` list. Events specify `at`,
+`wave`, `gain` and an optional one-voice group `IM_001`–`IM_008`. Wave paths are
+local filenames relative to the descriptor. See the synthetic fixtures in
+`tests/bgm-sequence.test.mjs`; game data and decoded audio stay outside git.
 
 `SoundPlayMode.BgmAisacIndex` follows the 7.1.0 `SetBgmBlockIndex` state machine:
 wait for an even block, enter the following transition block at its configured
-boundary, then enter the target block. Playback uses the Web Audio clock for
-wave scheduling. Seeking restores the target block from its start; it does not
-reconstruct elapsed music time from the reader's earlier manual dialogue pauses.
-`BgmVolume` applies its duration as a category fade across cue changes, multiplied
-by each cue's crossfade and the listener volume.
+boundary, then enter the target block. A jump keeps the BGM playing when the cue
+and the block asked for last are the same; otherwise the cue restarts in that
+block from its start (elapsed music time is not reconstructed). `BgmVolume`
+fades over its duration on the timeline clock and applies across cue changes,
+multiplied by each cue's crossfade and the listener volume.

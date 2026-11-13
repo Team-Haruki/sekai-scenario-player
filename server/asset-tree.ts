@@ -11,6 +11,7 @@
 //                                    then the costume's own motions/ folders)
 //   sound/voice/<scenario>/<v>.mp3   per-scenario and appearing-character shared voice folders
 //   sound/{bgm,se}/<id>.mp3          scenario BGM / SE
+//   bgm/<cue>/<file>                 a block cue's sequence.json and waves ("<cue>.sequence/")
 //   background/<id>.png              scenario backgrounds
 //   movie/<name>.mp4                 scenario movie, with Range support
 //   images/<path>.png                images for the story browser (logos, thumbnails)
@@ -171,6 +172,12 @@ class LiveTree {
       return this.voice(m[1], m[2]);
     if ((m = rel.match(/^sound\/bgm\/([\w.-]+)\.mp3$/)))
       return this.first(`ondemand/sound/scenario/bgm/${m[1]}/${m[1]}.mp3`, `startapp/sound/scenario/bgm/${m[1]}/${m[1]}.mp3`);
+    // a block cue's descriptor and waves: the exporter's "<cue>.sequence" folder beside the flat track
+    if ((m = rel.match(/^bgm\/([\w.-]+)\/([\w.-]+)$/)))
+      return this.first(
+        `ondemand/sound/scenario/bgm/${m[1]}/${m[1]}.sequence/${m[2]}`,
+        `startapp/sound/scenario/bgm/${m[1]}/${m[1]}.sequence/${m[2]}`,
+      );
     if ((m = rel.match(/^sound\/se\/([\w.-]+)\.mp3$/))) return this.getSe().get(m[1]) ?? null;
     if ((m = rel.match(/^background\/([\w.-]+)\.png$/)))
       return this.first(

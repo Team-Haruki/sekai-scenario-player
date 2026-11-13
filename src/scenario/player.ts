@@ -49,6 +49,7 @@ const AUTO_POST_VOICE = 500; // after the voice clip ends
 const VOICE_CAP = 30000; // give up waiting for a voice after this
 const PREFETCH_TALKS = 3; // lines ahead whose voices, SEs and backgrounds are fetched
 const FIRST_VOICE_WAIT = 5000; // playback waits this long at most for the first line's voice
+const BGM_SEQUENCE_WAIT = 4000; // and this long for the BGM cues' block sequence descriptors
 // 早送り: in-game capture advances a line every ~0.5-1s with the text shown at once.
 const FAST_SCALE = 3;
 const FAST_PAGE_HOLD = 500 * FAST_SCALE; // → 0.5s real time at FAST_SCALE
@@ -120,6 +121,7 @@ export class ScenarioPlayer {
   private finished?: () => void; // resolves run() when the live run reaches the end
   private stopped = false;
   private preloading?: Promise<void>;
+  private bgmVolumeTween = 0; // the BgmVolume fade in charge
   private executeSnippets = new Map<Snippet, InFlight>();
   private skipMode = false;
   private inputtedWaitSkip = false;
@@ -251,18 +253,14 @@ export class ScenarioPlayer {
     ]).then(() => {}));
   }
 
+  // The block sequences of the scenario's BGM cues, where the asset tree has
+  // them. The first line waits for the descriptors only, and not for long:
+  // a cue whose descriptor is late or missing plays its flat track.
   private async prepareBgm() {
-    const required = new Set<string>();
-    let cue = this.scn.FirstBgm;
-    for (const snippet of this.scn.Snippets) {
-      if (snippet.Action !== Action.Sound) continue;
-      const sound = this.scn.SoundData[snippet.ReferenceIndex];
-      if (!sound) continue;
-      if ((sound.PlayMode === SoundPlayMode.CrossFade || sound.PlayMode === SoundPlayMode.Stack) && sound.Bgm) cue = sound.Bgm;
-      if (sound.PlayMode === SoundPlayMode.BgmAisacIndex) required.add(cue);
-    }
-    const cues = new Set([this.scn.FirstBgm, ...this.scn.SoundData.map(s => s.Bgm)].filter(id => id && id !== 'bgm00000'));
-    await Promise.all([...cues].map(id => this.audio.prepareBgm(this.assets.bgm(id), this.assets.bgmSequence?.(id) ?? [], required.has(id))));
+    const ids = new Set([this.scn.FirstBgm, ...this.scn.SoundData.map((s) => s.Bgm)].filter((id) => id && id !== "bgm00000"));
+    const cues = [...ids].map((id) => ({ urls: this.assets.bgm(id), manifests: this.assets.bgmSequence?.(id) ?? [] }));
+    this.audio.retainBgm(cues.map((c) => c.urls));
+    await withTimeout(Promise.all(cues.map((c) => this.audio.prepareBgm(c.urls, c.manifests))), BGM_SEQUENCE_WAIT, undefined);
   }
 
   private firstVoice(): Promise<void> {
@@ -310,6 +308,7 @@ export class ScenarioPlayer {
     this.audio.stopVoice();
     this.audio.stopSe();
     this.audio.stopBgm();
+    this.bgmVolumeTween++;
     this.audio.setBgmVolume(1);
     this.dialogue.reset();
     this.effects.reset([0, 0, 0, 0]);
@@ -345,11 +344,10 @@ export class ScenarioPlayer {
     this.effects.reset(st.fade, st.sideCover);
     this.stage.setColorEffect(st.colorEffect);
     this.stage.setAmbient(st.ambient);
-    this.audio.stopBgm();
-    if (st.bgm) this.audio.playBgm(this.assets.bgm(st.bgm), 0.7, 0);
+    if (st.bgm) this.audio.restoreBgm(this.assets.bgm(st.bgm), 0.7, st.bgmBlock ?? 0);
     else this.audio.stopBgm();
+    this.bgmVolumeTween++;
     this.audio.setBgmVolume(st.bgmVolume ?? 1);
-    if (st.bgmBlock != null) this.audio.setBgmBlockIndex(st.bgmBlock, true);
     await Promise.all(
       [...st.chars].map(([id, c]) =>
         this.stage.place(id, c.costume, c.side, c.offsetX, c.motion, c.facial, c.visible),
@@ -919,9 +917,19 @@ export class ScenarioPlayer {
       case SoundPlayMode.BgmAisacIndex:
         this.audio.setBgmBlockIndex(s.BgmBlockIndex);
         return;
-      case SoundPlayMode.BgmVolume:
-        this.audio.setBgmVolume(s.Volume, Math.max(0, s.Duration || 0) * 1000);
+      case SoundPlayMode.BgmVolume: {
+        // over Duration, on the timeline clock; a newer BgmVolume takes over
+        const token = ++this.bgmVolumeTween;
+        void this.clock.tween(
+          Math.max(0, s.Duration || 0) * 1000,
+          this.audio.bgmVolume,
+          s.Volume,
+          (v) => this.audio.setBgmVolume(v),
+          undefined,
+          () => token === this.bgmVolumeTween,
+        );
         return;
+      }
       default:
         return;
     }

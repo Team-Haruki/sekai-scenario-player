@@ -10,8 +10,10 @@
 // ahead (preload), decoded and played through the context, so a voice starts
 // with its line and lip-sync reads its waveform. Until the context runs (the
 // browser allowed <audio> autoplay but no gesture happened yet) they play
-// from <audio> elements, the voice with a synthetic lip-sync level. BGM
-// always streams from one of two primed elements (two for the crossfade).
+// from <audio> elements, the voice with a synthetic lip-sync level. A flat
+// BGM streams from one of two primed elements (two for the crossfade); a CRI
+// block cue with a sequence descriptor (bgm-sequence.ts) is scheduled wave by
+// wave on the context, and is silent until the context runs.
 
 import { HttpError, fetchBlob, withTimeout } from "./net";
 import { BlockBgmPlayer, loadBgmSequence, type PreparedBgm } from "./bgm-sequence";
@@ -196,21 +198,52 @@ export class AudioManager {
   private bgm?: Track;
   private bgmUrl?: string;
   private fades = new WeakMap<HTMLAudioElement, ReturnType<typeof setTimeout>>();
+  // block cues of the loaded scenario, by their flat track's candidate list
   private sequences = new Map<string, PreparedBgm>();
+  private preparing = new Map<string, Promise<void>>();
+  private retained?: Set<string>;
   private sequence?: BlockBgmPlayer;
   private fadingSequences = new Set<BlockBgmPlayer>();
   private bgmGain?: GainNode;
+  // BgmVolume of the scenario: applies to every BGM, across cue changes
   private bgmCategory = 1;
-  private categoryFade?: ReturnType<typeof setTimeout>;
   private disposed = false;
 
-  async prepareBgm(urls: string[], manifests: string[], required = false) {
+  /**
+   * Look for the block sequence of a BGM cue (`manifests`: its candidate
+   * descriptor URLs). Never rejects: a cue without a descriptor, or whose
+   * descriptor fails to load or is not understood, plays its flat track.
+   */
+  prepareBgm(urls: string[], manifests: string[]): Promise<void> {
     const key = urls.join("\n");
-    if (this.sequences.has(key) || this.disposed) return;
-    const prepared = manifests.length ? await loadBgmSequence(manifests, this.ensureCtx()) : undefined;
-    if (this.disposed) return;
-    if (prepared) this.sequences.set(key, prepared);
-    else if (required) throw new Error(`Missing BGM block sequence: ${urls[0] ?? 'unknown cue'}`);
+    if (this.disposed || !manifests.length || this.sequences.has(key)) return Promise.resolve();
+    let task = this.preparing.get(key);
+    if (!task) {
+      task = loadBgmSequence(manifests, this.ensureCtx())
+        .then(
+          (prepared) => {
+            if (!prepared) return;
+            // the player was closed or went on to another scenario meanwhile
+            if (this.disposed || (this.retained && !this.retained.has(key))) prepared.release();
+            else this.sequences.set(key, prepared);
+          },
+          (e) => console.warn("bgm sequence load failed", urls[0], e),
+        )
+        .finally(() => this.preparing.delete(key));
+      this.preparing.set(key, task);
+    }
+    return task;
+  }
+
+  /** The BGM cues of the scenario now loaded: the sequences of every other cue are dropped. */
+  retainBgm(cues: string[][]) {
+    this.retained = new Set(cues.map((urls) => urls.join("\n")));
+    const playing = new Set([this.sequence, ...this.fadingSequences].map((p) => p?.prepared));
+    for (const [key, prepared] of this.sequences) {
+      if (this.retained.has(key) || playing.has(prepared)) continue;
+      prepared.release();
+      this.sequences.delete(key);
+    }
   }
 
   /**
@@ -223,9 +256,17 @@ export class AudioManager {
       console.warn(`BGM_VERTICAL ${value} is not the exported mix (${expected.value}); keeping it`);
   }
 
-  setBgmBlockIndex(index: number, restore = false) {
-    if (!this.sequence) throw new Error('BGM block sequence was not prepared');
-    this.sequence.setBlock(index, restore);
+  /** Scenario sound mode 6. A cue playing as a flat track has no blocks: the change is ignored. */
+  setBgmBlockIndex(index: number) {
+    if (!this.sequence) {
+      if (this.bgm) console.warn(`bgm block ${index} ignored: no block sequence for`, this.bgmUrl);
+      return;
+    }
+    try {
+      this.sequence.setBlock(index);
+    } catch (e) {
+      console.warn(`bgm block ${index} ignored`, this.bgmUrl, e);
+    }
   }
 
   private soundEffects = new Set<{
@@ -390,7 +431,7 @@ export class AudioManager {
   }
 
   // ── BGM ──────────────────────────────────────────────────────────────────
-  playBgm(urls: string[], volume = 1, fadeMs = 250) {
+  playBgm(urls: string[], volume = 1, fadeMs = 250, block = 0) {
     const url = urls[0];
     if ((this.bgm || this.sequence) && this.bgmUrl === url) return;
     const old = this.bgm, oldSequence = this.sequence;
@@ -405,7 +446,7 @@ export class AudioManager {
       }
       this.applyBgmCategory();
       this.sequence = new BlockBgmPlayer(ctx, prepared, this.bgmGain);
-      this.sequence.start(volume, fadeMs);
+      void this.sequence.start(volume, fadeMs, prepared.manifest.blocks[block] ? block : 0);
     } else if (urls.length) {
       const t = this.bgmTracks.find(x => x !== old)!;
       this.cancelFade(t.el);
@@ -461,20 +502,33 @@ export class AudioManager {
     this.bgm = undefined;
     this.bgmUrl = undefined;
   }
+  /**
+   * The BGM as of a jump target. A flat cue that is already playing goes on;
+   * a block cue goes on when `block` is the one it was last sent to, and
+   * otherwise restarts there.
+   */
+  restoreBgm(urls: string[], volume: number, block = 0) {
+    if (this.bgmUrl === urls[0]) {
+      if (this.bgm || this.sequence?.block === block) return;
+      if (this.sequence?.prepared.manifest.blocks[block]) {
+        this.sequence.setBlock(block, true);
+        return;
+      }
+    }
+    this.stopBgm();
+    this.playBgm(urls, volume, 0, block);
+  }
   private applyBgmCategory() {
     for (const t of this.bgmTracks) this.applyBgm(t.el);
     if (this.bgmGain) this.bgmGain.gain.value = this.vol.bgm * this.bgmCategory;
   }
-  setBgmVolume(v: number, fadeMs = 0) {
-    clearTimeout(this.categoryFade);
-    const from = this.bgmCategory, to = clamp01(v), start = Date.now();
-    const tick = () => {
-      const k = fadeMs > 0 ? Math.min(1, (Date.now() - start) / fadeMs) : 1;
-      this.bgmCategory = from + (to - from) * k;
-      this.applyBgmCategory();
-      if (k < 1) this.categoryFade = setTimeout(tick, 16);
-    };
-    tick();
+  /** The scenario's BgmVolume (0-1). */
+  get bgmVolume() {
+    return this.bgmCategory;
+  }
+  setBgmVolume(v: number) {
+    this.bgmCategory = Number.isFinite(v) ? clamp01(v) : 1;
+    this.applyBgmCategory();
   }
 
   // ── SE ───────────────────────────────────────────────────────────────────
@@ -623,11 +677,11 @@ export class AudioManager {
 
   destroy() {
     this.disposed = true;
-    clearTimeout(this.categoryFade);
-    this.sequences.clear();
     for (const e of GESTURES) removeEventListener(e, this.unlock, { capture: true });
     this.stopVoice();
     this.stopBgm();
+    for (const prepared of this.sequences.values()) prepared.release();
+    this.sequences.clear();
     this.stopSe();
     this.clips.clear();
     void this.ctx?.close().catch(() => {});

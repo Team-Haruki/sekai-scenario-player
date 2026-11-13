@@ -33,8 +33,30 @@ export interface BlockChange { t: number; index: number }
 export interface BlockVisit { block: number; start: number; end: number; offset?: number }
 /** `offset`: position inside the waveform where the note starts. */
 export interface BgmNote { key: string; start: number; stop: number; wave: string; gain: number; group: string; offset: number }
-export interface PreparedBgm { manifest: BgmSequence; buffers: Map<string, AudioBuffer> }
+/**
+ * A loaded descriptor. Its waves are fetched and decoded when the scheduler asks
+ * for them and dropped again once it stops asking: a cue decoded whole takes
+ * hundreds of megabytes (bgm90001 is 17 minutes of stereo audio in 185 waves).
+ */
+export interface PreparedBgm {
+  manifest: BgmSequence;
+  /** Decoded waves, ready to start. */
+  buffers: Map<string, AudioBuffer>;
+  /** Fetch and decode these waves. Resolves once each is decoded or has failed. */
+  load(ids: Iterable<string>): Promise<void>;
+  /** Drop the decoded waves that are not among `ids`. */
+  keep(ids: ReadonlySet<string>): void;
+  /** Drop everything; later loads do nothing. */
+  release(): void;
+}
 const EPS = 1e-9;
+const LEAD = 0.05; // scheduling lead, so setting up the first node cannot clip the intro
+const LOOKAHEAD = 1.5; // notes are scheduled this far ahead: the timers of a hidden tab fire once a second
+const WINDOW = 12; // waves of the blocks reached within this time are kept decoded
+const TICK = 100;
+const START_WAIT = 3_000; // a cue whose first waves are not decoded by then starts anyway; they join late
+const WAVE_RETRY = 5_000; // a wave that failed to load is asked for again after this
+const FETCH_ALL = 24; // a cue with at most this many waves is fetched (not decoded) whole once it plays
 // Voice-limit groups the game's ACF caps at one voice.
 const ONE_VOICE_GROUPS = ['IM_001', 'IM_002', 'IM_003', 'IM_004', 'IM_005', 'IM_006', 'IM_007', 'IM_008'];
 
@@ -61,33 +83,84 @@ export function validateSequence(m: BgmSequence) {
     throw new Error('Invalid BGM AISAC');
 }
 
-export async function loadBgmSequence(urls: string[], ctx: AudioContext): Promise<PreparedBgm | undefined> {
-  let manifest: BgmSequence | undefined, base = '';
-  for (const url of urls) {
-    try { manifest = await fetchJson<BgmSequence>(url); base = url; break; }
-    catch (e) { if (!(e instanceof HttpError && e.status === 404)) throw e; }
-  }
-  if (!manifest) return;
-  validateSequence(manifest);
+/** One wave as the descriptor times it: an MP3's encoder delay and padding are cut off. */
+async function decodeWave(ctx: AudioContext, bytes: ArrayBuffer, wave: { file: string; duration: number }): Promise<AudioBuffer> {
+  // decodeAudioData detaches its input: the bytes are kept for the MP3 header and a later decode
+  const decoded = await ctx.decodeAudioData(bytes.slice(0));
+  if (!wave.file.endsWith('.mp3')) return decoded;
+  const offset = mp3LeadingSamples(bytes, decoded.length, decoded.sampleRate);
+  const length = Math.min(decoded.length - offset, Math.round(wave.duration * decoded.sampleRate));
+  if (length <= 0) throw new Error('Invalid decoded BGM waveform');
+  if (!offset && length === decoded.length) return decoded;
+  const trimmed = ctx.createBuffer(decoded.numberOfChannels, length, decoded.sampleRate);
+  for (let ch = 0; ch < decoded.numberOfChannels; ch++)
+    trimmed.copyToChannel(decoded.getChannelData(ch).subarray(offset, offset + length), ch);
+  return trimmed;
+}
+
+/** The waves of a descriptor at `base` (its URL), loaded on request. */
+export function prepareBgm(manifest: BgmSequence, base: string, ctx: AudioContext): PreparedBgm {
   const buffers = new Map<string, AudioBuffer>();
-  await Promise.all(Object.entries(manifest.waves).map(async ([id, wave]) => {
-    const bytes = await fetchBuffer(new URL(wave.file, new URL(base, location.href)).href, { timeoutMs: 30_000 });
-    // decodeAudioData may detach its input, so preserve metadata first.
-    const encoded = wave.file.endsWith('.mp3') ? bytes.slice(0) : undefined;
-    const decoded = await ctx.decodeAudioData(bytes);
-    if (!encoded) { buffers.set(id, decoded); return; }
-    const offset = encoded ? mp3LeadingSamples(encoded, decoded.length, decoded.sampleRate) : 0;
-    const length = Math.min(decoded.length - offset, Math.round(wave.duration * decoded.sampleRate));
-    if (length <= 0) throw new Error('Invalid decoded BGM waveform');
-    if (!offset && length === decoded.length) buffers.set(id, decoded);
-    else {
-      const trimmed = ctx.createBuffer(decoded.numberOfChannels, length, decoded.sampleRate);
-      for (let ch = 0; ch < decoded.numberOfChannels; ch++)
-        trimmed.copyToChannel(decoded.getChannelData(ch).subarray(offset, offset + length), ch);
-      buffers.set(id, trimmed);
+  const encoded = new Map<string, Promise<ArrayBuffer>>(); // kept: a wave dropped from `buffers` is decoded again
+  const decoding = new Map<string, Promise<void>>();
+  const retryAt = new Map<string, number>();
+  let wanted: ReadonlySet<string> | undefined, released = false, fetchedAll = false;
+  const bytes = (id: string) => {
+    let p = encoded.get(id);
+    if (!p) {
+      p = fetchBuffer(new URL(manifest.waves[id].file, new URL(base, location.href)).href, { timeoutMs: 30_000 });
+      encoded.set(id, p);
     }
-  }));
-  return { manifest, buffers };
+    return p;
+  };
+  const decode = (id: string) => {
+    let p = decoding.get(id);
+    if (!p) {
+      p = bytes(id).then(async (b) => {
+        if (released) return;
+        const buffer = await decodeWave(ctx, b, manifest.waves[id]);
+        if (!released && (!wanted || wanted.has(id))) buffers.set(id, buffer);
+      }).catch((e) => {
+        if (released) return;
+        encoded.delete(id);
+        retryAt.set(id, Date.now() + WAVE_RETRY);
+        console.warn('bgm wave load failed', manifest.waves[id].file, e);
+      }).finally(() => decoding.delete(id));
+      decoding.set(id, p);
+    }
+    return p;
+  };
+  return {
+    manifest, buffers,
+    async load(ids) {
+      if (released) return;
+      const now = Date.now();
+      await Promise.all([...ids].filter(id => manifest.waves[id] && !buffers.has(id) && !((retryAt.get(id) ?? 0) > now)).map(decode));
+    },
+    keep(ids) {
+      wanted = ids;
+      for (const id of buffers.keys()) if (!ids.has(id)) buffers.delete(id);
+      if (fetchedAll || released || Object.keys(manifest.waves).length > FETCH_ALL) return;
+      // a small cue is fetched whole, so a block the scenario asks for has its waves at hand
+      fetchedAll = true;
+      for (const id of Object.keys(manifest.waves)) {
+        const p = bytes(id);
+        p.catch(() => { if (encoded.get(id) === p) encoded.delete(id); });
+      }
+    },
+    release() { released = true; buffers.clear(); encoded.clear(); },
+  };
+}
+
+/** The first descriptor among `urls` that exists; undefined when none does (the cue is a flat track). */
+export async function loadBgmSequence(urls: string[], ctx: AudioContext): Promise<PreparedBgm | undefined> {
+  for (const url of urls) {
+    let manifest: BgmSequence;
+    try { manifest = await fetchJson<BgmSequence>(url); }
+    catch (e) { if (e instanceof HttpError && e.status === 404) continue; throw e; }
+    validateSequence(manifest);
+    return prepareBgm(manifest, url, ctx);
+  }
 }
 
 /** When a requested change leaves a block entered at `offset`, and the beat it leaves on (0 off-beat). */
@@ -188,44 +261,90 @@ export function waveformNotes(m: BgmSequence, visits: BlockVisit[]): BgmNote[] {
 /** Schedule decoded waves on the audio clock, without restarting the intro at each loop. */
 export class BlockBgmPlayer {
   readonly gain: GainNode;
-  private origin: number;
+  private origin = 0;
   private initial = 0;
+  private requested = 0;
   private changes: BlockChange[] = [];
   private nodes = new Map<string, { src: AudioBufferSourceNode; gain: GainNode; start: number; stop: number }>();
   private timer?: ReturnType<typeof setTimeout>;
+  private startTimer?: ReturnType<typeof setTimeout>;
   private fadeTimer?: ReturnType<typeof setTimeout>;
+  private started = false;
   private stopped = false;
+  private fading = false;
   private completed = new Set<string>();
 
   /** AISAC controls the exported gains assume; empty when the cue has none. */
   get aisac(): readonly BgmAisac[] { return this.prepared.manifest.aisac ?? []; }
+  /** The block asked for last (the one it started in until a change). */
+  get block() { return this.requested; }
 
-  constructor(private ctx: AudioContext, private prepared: PreparedBgm, destination: AudioNode) {
+  constructor(private ctx: AudioContext, readonly prepared: PreparedBgm, destination: AudioNode) {
     this.gain = ctx.createGain();
     this.gain.connect(destination);
-    // Leave a short scheduling lead so first-node setup cannot clip the intro.
-    this.origin = ctx.currentTime + 0.05;
   }
-  start(volume: number, fadeMs: number) {
-    this.gain.gain.setValueAtTime(fadeMs > 0 ? 0 : volume, this.ctx.currentTime);
-    if (fadeMs > 0) {
-      this.gain.gain.setValueAtTime(0, this.origin);
-      this.gain.gain.linearRampToValueAtTime(volume, this.origin + fadeMs / 1000);
-    }
-    this.tick();
+
+  /** Start in `block` once its first waves are decoded (or START_WAIT passed); resolves when it started or was stopped. */
+  start(volume: number, fadeMs: number, block = 0): Promise<void> {
+    this.check(block);
+    this.initial = this.requested = block;
+    const g = this.gain.gain;
+    g.setValueAtTime(fadeMs > 0 ? 0 : volume, this.ctx.currentTime);
+    return new Promise((resolve) => {
+      const begin = () => {
+        clearTimeout(this.startTimer);
+        if (!this.stopped && !this.started) {
+          this.started = true;
+          this.origin = this.ctx.currentTime + LEAD;
+          if (fadeMs > 0 && !this.fading) {
+            g.setValueAtTime(0, this.origin);
+            g.linearRampToValueAtTime(volume, this.origin + fadeMs / 1000);
+          }
+          this.tick();
+        }
+        resolve();
+      };
+      this.startTimer = setTimeout(begin, START_WAIT);
+      void this.prepared.load(this.window(0).wanted).then(begin, begin);
+    });
   }
-  setBlock(index: number, restore = false) {
+
+  private check(index: number) {
     if (!Number.isInteger(index) || !this.prepared.manifest.blocks[index]) throw new Error('Invalid BGM block index');
+  }
+
+  /** A scenario block change; `restore` restarts in that block instead (after a jump). */
+  setBlock(index: number, restore = false) {
+    this.check(index);
+    this.requested = index;
+    if (!this.started) {
+      // before the first note: a change counts from time 0
+      if (restore) { this.initial = index; this.changes = []; } else this.changes.push({ t: 0, index });
+      return;
+    }
     if (restore) {
-      this.clearNodes(); this.completed.clear(); this.initial = index; this.origin = this.ctx.currentTime + 0.05; this.changes = [];
+      this.clearNodes(); this.completed.clear(); this.initial = index; this.origin = this.ctx.currentTime + LEAD; this.changes = [];
     } else this.changes.push({ t: Math.max(0, this.ctx.currentTime - this.origin), index });
     this.tick();
   }
+
+  /** The plan up to WINDOW after `elapsed`, and the waves of the blocks playing in that time. */
+  private window(elapsed: number) {
+    const m = this.prepared.manifest;
+    const visits = blockVisits(m, elapsed + WINDOW, this.changes, this.initial);
+    const wanted = new Set<string>();
+    for (const v of visits) if (v.end > elapsed) for (const e of m.blocks[v.block].events) wanted.add(e.wave);
+    return { visits, wanted };
+  }
+
   private tick = () => {
     clearTimeout(this.timer);
     if (this.stopped) return;
     const now = this.ctx.currentTime, elapsed = Math.max(0, now - this.origin);
-    const notes = waveformNotes(this.prepared.manifest, blockVisits(this.prepared.manifest, elapsed + 0.25, this.changes, this.initial));
+    const { visits, wanted } = this.window(elapsed);
+    this.prepared.keep(wanted);
+    void this.prepared.load(wanted);
+    const notes = waveformNotes(this.prepared.manifest, visits);
     const planned = new Map(notes.map(n => [n.key, n]));
     for (const [key, node] of this.nodes) {
       const note = planned.get(key);
@@ -234,11 +353,14 @@ export class BlockBgmPlayer {
       }
     }
     for (const note of notes) {
+      if (note.start > elapsed + LOOKAHEAD) break; // sorted by start
       if (note.stop <= elapsed || this.completed.has(note.key)) continue;
       const stop = this.origin + note.stop;
       const existing = this.nodes.get(note.key);
       if (existing) { if (existing.stop !== stop) { existing.src.stop(stop); existing.stop = stop; } continue; }
-      const buffer = this.prepared.buffers.get(note.wave)!;
+      // a wave still loading joins inside its waveform once it is decoded
+      const buffer = this.prepared.buffers.get(note.wave);
+      if (!buffer) continue;
       const offset = note.offset + Math.max(0, elapsed - note.start);
       if (offset >= buffer.duration) continue;
       const src = this.ctx.createBufferSource(), gain = this.ctx.createGain();
@@ -249,11 +371,20 @@ export class BlockBgmPlayer {
       src.onended = () => { this.completed.add(note.key); if (this.nodes.get(note.key) === node) this.nodes.delete(note.key); src.disconnect(); gain.disconnect(); };
       src.start(Math.max(now, node.start), offset); src.stop(stop);
     }
-    this.timer = setTimeout(this.tick, 50);
+    this.timer = setTimeout(this.tick, TICK);
   };
+
   fadeOut(ms: number, done: () => void) {
-    this.gain.gain.cancelAndHoldAtTime(this.ctx.currentTime);
-    this.gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + ms / 1000);
+    this.fading = true;
+    const g = this.gain.gain, now = this.ctx.currentTime;
+    if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(now);
+    else {
+      // Firefox has no cancelAndHoldAtTime
+      const held = g.value;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(held, now);
+    }
+    g.linearRampToValueAtTime(0, now + ms / 1000);
     clearTimeout(this.fadeTimer);
     this.fadeTimer = setTimeout(() => { this.stop(); done(); }, ms);
   }
@@ -262,7 +393,7 @@ export class BlockBgmPlayer {
     this.nodes.clear();
   }
   stop() {
-    this.stopped = true; clearTimeout(this.timer); clearTimeout(this.fadeTimer);
+    this.stopped = true; clearTimeout(this.timer); clearTimeout(this.startTimer); clearTimeout(this.fadeTimer);
     this.clearNodes(); this.gain.disconnect();
   }
 }
