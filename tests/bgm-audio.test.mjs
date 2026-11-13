@@ -106,3 +106,24 @@ test('jump restores the latest block and volume, and new cues reset block state'
   calls.length=0;await player.jumpTo(4);assert.deepEqual(calls,[['volume',.4]]);
   player.handleSound(1);assert.deepEqual(calls.at(-1),['block',2]);
 });
+test('an AISAC value the exported mix does not assume is reported, not applied',async()=>{
+  const {audio}=audioFixture();
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try {
+    audio.setBgmAisac(.3); // no layered BGM playing
+    fetchJson.mockResolvedValue({...manifest(),aisac:[{control:'BGM_VERTICAL',value:0}]});
+    await audio.prepareBgm(['cue.mp3'],['sequence.json'],true);
+    audio.playBgm(['cue.mp3'],.7,0);
+    audio.setBgmAisac(0);
+    assert.equal(warn.mock.calls.length,0);
+    audio.setBgmAisac(.3);
+    assert.equal(warn.mock.calls.length,1);
+    assert.match(warn.mock.calls[0][0],/BGM_VERTICAL 0.3/);
+  }finally{warn.mockRestore();audio.destroy();}
+});
+test('scenario sound mode 5 hands its value to the BGM AISAC check',()=>{
+  const calls=[],audio={setBgmAisac:v=>calls.push(v)};
+  const scenario={FirstBgm:'',FirstBackground:'',FirstLayout:[],SoundData:[{PlayMode:5,Bgm:'cue',Volume:0}],Snippets:[]};
+  const player=new ScenarioPlayer(scenario,{},{},audio,{},{bgm:id=>[id]},new Clock());
+  player.handleSound(0);assert.deepEqual(calls,[0]);
+});

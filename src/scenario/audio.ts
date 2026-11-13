@@ -204,6 +204,16 @@ export class AudioManager {
     else if (required) throw new Error(`Missing BGM block sequence: ${urls[0] ?? 'unknown cue'}`);
   }
 
+  /**
+   * Scenario sound mode 5 sets the BGM's BGM_VERTICAL AISAC. Layered cues are exported
+   * with their gains at the AISAC default, so another value cannot be reproduced.
+   */
+  setBgmAisac(value: number) {
+    const expected = this.sequence?.aisac.find(a => a.control === 'BGM_VERTICAL');
+    if (expected && Math.abs(expected.value - value) > 1e-6)
+      console.warn(`BGM_VERTICAL ${value} is not the exported mix (${expected.value}); keeping it`);
+  }
+
   setBgmBlockIndex(index: number, restore = false) {
     if (!this.sequence) throw new Error('BGM block sequence was not prepared');
     this.sequence.setBlock(index, restore);

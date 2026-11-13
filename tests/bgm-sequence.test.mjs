@@ -79,7 +79,7 @@ function graph(m=transitionCue()) {
   const ctx={get currentTime(){return Date.now()/1000;},
     createGain(){const g={gain:param(),connect:to=>to,disconnect:vi.fn()};gains.push(g);return g;},
     createBufferSource(){const s={connect:to=>to,start:vi.fn(),stop:vi.fn(),disconnect:vi.fn()};sources.push(s);return s;}};
-  return {player:new BlockBgmPlayer(ctx,{manifest:m,buffers:new Map([['a',{duration:4}]])},{}),sources,gains};
+  return {player:new BlockBgmPlayer(ctx,{manifest:m,buffers:new Map([['a',{duration:4}],['b',{duration:8}]])},{}),sources,gains};
 }
 test('scheduler schedules on the audio clock, restores block and stops all nodes', () => {
   const {player,sources,gains}=graph();
@@ -112,4 +112,64 @@ test('a changed plan cancels a future note already inside the lookahead window',
   player.setBlock(2);
   assert.equal(future.onended,null);assert.ok(future.disconnect.mock.calls.length);
   player.stop();
+});
+// CRI TransitionMode 1: blocks 2 and 3 are same-length variants on a two-beat grid.
+const syncCue = (mode = 1) => {
+  const variant = (loop) => ({ ...block(8, loop, 1, 2), transitionMode: mode, events: [{ at: 0, wave: 'b', gain: 1 }] });
+  const m = cue([block(), block(), variant(true), variant(false), block(3, true)]);
+  m.waves.b = { file: 'b.wav', duration: 8 };
+  return m;
+};
+test('a beat-synchronised transition enters the destination at the same beat', () => {
+  const m = syncCue(), visits = blockVisits(m, 16, [{ t: 5, index: 4 }]);
+  assert.deepEqual(visits.slice(2, 5), [
+    { block: 2, start: 4, end: 8 }, { block: 3, start: 8, end: 12, offset: 4 }, { block: 4, start: 12, end: 15 },
+  ]);
+  // The destination's whole-block note continues from the entry beat instead of restarting.
+  const note = waveformNotes(m, visits).find(n => n.key.startsWith('3:'));
+  assert.deepEqual([note.start, note.stop, note.offset], [8, 12, 4]);
+  // Mode 0 starts the destination from its beginning.
+  const plain = blockVisits(syncCue(0), 16, [{ t: 5, index: 4 }]);
+  assert.deepEqual(plain[3], { block: 3, start: 8, end: 12 });
+  assert.equal(waveformNotes(syncCue(0), plain).find(n => n.key.startsWith('3:')).offset, 0);
+});
+test('no synchronised entry when the destination has too few beats or is not on a beat grid', () => {
+  const m = syncCue();
+  m.blocks[3].divisions = 1;
+  assert.equal(blockVisits(m, 16, [{ t: 5, index: 4 }])[3].offset, undefined);
+  const n = syncCue();
+  n.blocks[3].transition = 0;
+  assert.equal(blockVisits(n, 16, [{ t: 5, index: 4 }])[3].offset, undefined);
+});
+test('notes that ended before the entry point are not replayed', () => {
+  const m = syncCue();
+  m.blocks[3].events.push({ at: 1, wave: 'a', gain: 1 }); // 'a' lasts 4 s, ends at 5 > 4: continues
+  m.waves.c = { file: 'c.wav', duration: 2 };
+  m.blocks[3].events.push({ at: 1, wave: 'c', gain: 1 }); // ends at 3 < 4: skipped
+  const notes = waveformNotes(m, blockVisits(m, 16, [{ t: 5, index: 4 }])).filter(n => n.key.startsWith('3:'));
+  assert.deepEqual(notes.map(n => [n.wave, n.start, n.offset]), [['b', 8, 4], ['a', 8, 3]]);
+});
+test('a jump block continues at its destination when it ends', () => {
+  const first = block(); first.next = 2;
+  assert.deepEqual(blockVisits(cue([first, block(), block(3, true)]), 8).map(v => v.block), [0, 2, 2]);
+});
+test('validation accepts the new block fields and every one-voice group, and rejects bad values', () => {
+  const m = syncCue(); m.blocks[0].next = 4; m.aisac = [{ control: 'BGM_VERTICAL', value: 0 }];
+  m.blocks[0].events[0].group = 'IM_008';
+  validateSequence(m);
+  const mutations = [x => x.blocks[2].transitionMode = 2, x => x.blocks[0].next = 5, x => x.blocks[0].next = 1.5,
+    x => x.aisac = {}, x => x.aisac = [{ control: 1, value: 0 }], x => x.aisac = [{ control: 'x', value: NaN }],
+    x => x.blocks[0].events[0].group = 'IM_009'];
+  for (const mutate of mutations) { const x = syncCue(); mutate(x); assert.throws(() => validateSequence(x)); }
+});
+test('scheduler starts a continuing note inside its waveform', () => {
+  const m = syncCue();
+  const { player, sources } = graph(m);
+  try {
+    player.start(1, 0);
+    vi.advanceTimersByTime(5000); player.setBlock(4);
+    vi.advanceTimersByTime(3500);
+    assert.ok(sources.some(s => s.start.mock.calls.some(([t, offset]) => Math.abs(t - 8.05) < 1e-6 && offset === 4)));
+    assert.deepEqual(player.aisac, []);
+  } finally { player.stop(); }
 });

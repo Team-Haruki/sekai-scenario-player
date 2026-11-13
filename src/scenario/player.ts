@@ -913,6 +913,9 @@ export class ScenarioPlayer {
         // game mode 3 stops the named SE via playSEDict.
         if (s.Se) this.audio.stopSe(this.assets.se(s.Se));
         return;
+      case SoundPlayMode.BgmAisacVolume:
+        this.audio.setBgmAisac(s.Volume);
+        return;
       case SoundPlayMode.BgmAisacIndex:
         this.audio.setBgmBlockIndex(s.BgmBlockIndex);
         return;

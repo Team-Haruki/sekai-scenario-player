@@ -1,6 +1,11 @@
 // CRI block cues exported from ACB. Transition rules mirror
 // ScenarioAudio.SetBgmBlockIndex (7.1.0, 0x42AE650): wait for an even block,
 // pass through its following transition block, then enter the requested block.
+// Block-level rules follow the CRI Atom runtime shipped with 7.1.0:
+// - a requested beat transition (transition 1) out of a block with transitionMode 1
+//   that crosses beat k enters a beat-synchronised destination with more than k
+//   divisions at its own beat k; notes already sounding there continue mid-wave;
+// - a block with `next` jumps there when it ends, instead of to the following block.
 import { mp3LeadingSamples } from './mp3-timing';
 import { fetchBuffer, fetchJson, HttpError } from './net';
 
@@ -10,19 +15,28 @@ export interface BgmBlock {
   loopCount?: number;
   transition: number;
   divisions: number;
+  transitionMode?: number;
+  next?: number;
   events: { at: number; wave: string; gain: number; group?: string }[];
 }
+/** AISAC control value the exported gains were evaluated at. */
+export interface BgmAisac { control: string; value: number }
 export interface BgmSequence {
   version: 1;
   cue: string;
   waves: Record<string, { file: string; duration: number }>;
   blocks: BgmBlock[];
+  aisac?: BgmAisac[];
 }
 export interface BlockChange { t: number; index: number }
-export interface BlockVisit { block: number; start: number; end: number }
-export interface BgmNote { key: string; start: number; stop: number; wave: string; gain: number; group: string }
+/** `offset`: position inside the block where this visit starts (beat-synchronised entry). */
+export interface BlockVisit { block: number; start: number; end: number; offset?: number }
+/** `offset`: position inside the waveform where the note starts. */
+export interface BgmNote { key: string; start: number; stop: number; wave: string; gain: number; group: string; offset: number }
 export interface PreparedBgm { manifest: BgmSequence; buffers: Map<string, AudioBuffer> }
 const EPS = 1e-9;
+// Voice-limit groups the game's ACF caps at one voice.
+const ONE_VOICE_GROUPS = ['IM_001', 'IM_002', 'IM_003', 'IM_004', 'IM_005', 'IM_006', 'IM_007', 'IM_008'];
 
 export function validateSequence(m: BgmSequence) {
   if (m?.version !== 1 || !m.blocks?.length || !m.waves) throw new Error('Invalid BGM sequence');
@@ -33,13 +47,18 @@ export function validateSequence(m: BgmSequence) {
   for (const b of m.blocks) {
     if (!(b.duration > 0) || !Number.isFinite(b.duration) || ![0, 1, 2].includes(b.transition)
       || (b.transition === 1 && (!Number.isInteger(b.divisions) || b.divisions < 2 || b.divisions === 65535))
-      || (b.loopCount != null && (!Number.isInteger(b.loopCount) || b.loopCount < 0)))
+      || (b.loopCount != null && (!Number.isInteger(b.loopCount) || b.loopCount < 0))
+      || (b.transitionMode != null && ![0, 1].includes(b.transitionMode))
+      || (b.next != null && (!Number.isInteger(b.next) || b.next < 0 || b.next >= m.blocks.length)))
       throw new Error('Invalid BGM block');
     for (const e of b.events) {
       if (!m.waves[e.wave] || !Number.isFinite(e.at) || e.at < 0 || !Number.isFinite(e.gain) || e.gain < 0
-        || (e.group && !['IM_001', 'IM_002'].includes(e.group))) throw new Error('Unsupported BGM event');
+        || (e.group && !ONE_VOICE_GROUPS.includes(e.group))) throw new Error('Unsupported BGM event');
     }
   }
+  if (m.aisac != null && (!Array.isArray(m.aisac)
+    || m.aisac.some(a => typeof a?.control !== 'string' || !Number.isFinite(a.value))))
+    throw new Error('Invalid BGM AISAC');
 }
 
 export async function loadBgmSequence(urls: string[], ctx: AudioContext): Promise<PreparedBgm | undefined> {
@@ -71,11 +90,20 @@ export async function loadBgmSequence(urls: string[], ctx: AudioContext): Promis
   return { manifest, buffers };
 }
 
-function transitionAt(b: BgmBlock, start: number, request: number) {
-  if (b.transition === 0) return start + b.duration;
-  if (b.transition === 2) return request;
+/** When a requested change leaves a block entered at `offset`, and the beat it leaves on (0 off-beat). */
+function transitionAt(b: BgmBlock, start: number, request: number, offset = 0): [number, number] {
+  const end = start + b.duration - offset;
+  if (b.transition === 0) return [end, 0];
+  if (b.transition === 2) return [request, 0];
   const step = b.duration / b.divisions;
-  return Math.min(start + b.duration, start + (Math.floor(Math.max(0, request - start) / step + EPS) + 1) * step);
+  const beat = Math.floor((offset + Math.max(0, request - start)) / step + EPS) + 1;
+  return [Math.min(end, start + beat * step - offset), beat];
+}
+
+/** Where the destination of a requested transition starts. */
+function entryOffset(from: BgmBlock, beat: number, to: BgmBlock | undefined) {
+  return beat > 0 && from.transitionMode === 1 && to?.transition === 1 && to.divisions > beat
+    ? beat * (to.duration / to.divisions) : 0;
 }
 
 /** Deterministic plan; the online scheduler and offline verification use the same time origin. */
@@ -85,35 +113,36 @@ export function blockVisits(m: BgmSequence, duration: number, changes: readonly 
     || commands.some(c => !Number.isInteger(c.index) || c.index < 0 || c.index >= blocks.length || !Number.isFinite(c.t) || c.t < 0))
     throw new Error('Invalid BGM block command');
   const visits: BlockVisit[] = [], loops = new Map<number, number>();
-  let index = initial, start = 0, command = 0;
+  let index = initial, start = 0, offset = 0, beat = 0, command = 0;
   let pending: { target: number; phase: 'even' | 'transition' | 'target' } | undefined;
-  const exit = (i: number, t: number): [number, number] => {
+  const exit = (i: number, t: number, from: number): [number, number] => {
     const b = blocks[i], count = b.loopCount ?? 65535;
     const repeats = b.loop && (count === 65535 || (loops.get(i) ?? 0) < count);
-    return [t + b.duration, repeats ? i : i + 1];
+    return [t + b.duration - from, repeats ? i : b.next ?? i + 1];
   };
-  let [end, next] = exit(index, start);
+  let [end, next] = exit(index, start, offset);
   for (let step = 0; step < 20_000; step++) {
     if (start >= duration || index >= blocks.length) return visits;
     while (command < commands.length && commands[command].t < Math.min(end, duration) - EPS) {
       const c = commands[command++];
       pending = { target: c.index, phase: index % 2 ? 'even' : 'transition' };
-      [end, next] = exit(index, start);
-      if (pending.phase === 'transition') { end = transitionAt(blocks[index], start, c.t); next = index + 1; }
+      [end, next] = exit(index, start, offset); beat = 0;
+      if (pending.phase === 'transition') { [end, beat] = transitionAt(blocks[index], start, c.t, offset); next = index + 1; }
     }
     const actualEnd = Math.min(end, duration);
-    visits.push({ block: index, start, end: actualEnd });
+    visits.push(offset > EPS ? { block: index, start, end: actualEnd, offset } : { block: index, start, end: actualEnd });
     if (actualEnd >= duration) return visits;
     const old = index;
-    index = next; start = end;
+    offset = entryOffset(blocks[old], beat, blocks[next]);
+    index = next; start = end; beat = 0;
     if (index >= blocks.length) return visits;
     loops.set(index, index === old ? (loops.get(index) ?? 0) + 1 : 0);
-    [end, next] = exit(index, start);
+    [end, next] = exit(index, start, offset);
     if (pending?.phase === 'transition') {
-      pending.phase = 'target'; end = transitionAt(blocks[index], start, start); next = pending.target;
+      pending.phase = 'target'; [end, beat] = transitionAt(blocks[index], start, start, offset); next = pending.target;
     } else if (pending?.phase === 'target') pending = undefined;
     else if (pending?.phase === 'even' && index % 2 === 0) {
-      pending.phase = 'transition'; end = transitionAt(blocks[index], start, start); next = index + 1;
+      pending.phase = 'transition'; [end, beat] = transitionAt(blocks[index], start, start, offset); next = index + 1;
     }
   }
   throw new Error('BGM sequence did not make progress');
@@ -122,9 +151,13 @@ export function blockVisits(m: BgmSequence, duration: number, changes: readonly 
 export function waveformNotes(m: BgmSequence, visits: BlockVisit[]): BgmNote[] {
   const notes: BgmNote[] = [];
   for (const v of visits) m.blocks[v.block].events.forEach((e, i) => {
-    const start = v.start + e.at;
+    // Entered mid-block: notes still sounding at the entry point continue from there.
+    const from = v.offset ?? 0, length = m.waves[e.wave].duration;
+    const into = Math.max(0, from - e.at);
+    if (into >= length - EPS) return;
+    const start = v.start + e.at - from + into;
     if (start < v.end - EPS) notes.push({ key: `${v.block}:${v.start}:${i}`, start,
-      stop: start + m.waves[e.wave].duration, wave: e.wave, gain: e.gain, group: e.group || '' });
+      stop: start + length - into, wave: e.wave, gain: e.gain, group: e.group || '', offset: into });
   });
   notes.sort((a, b) => a.start - b.start);
   const active = new Map<string, BgmNote>();
@@ -147,6 +180,9 @@ export class BlockBgmPlayer {
   private fadeTimer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private completed = new Set<string>();
+
+  /** AISAC controls the exported gains assume; empty when the cue has none. */
+  get aisac(): readonly BgmAisac[] { return this.prepared.manifest.aisac ?? []; }
 
   constructor(private ctx: AudioContext, private prepared: PreparedBgm, destination: AudioNode) {
     this.gain = ctx.createGain();
@@ -187,7 +223,7 @@ export class BlockBgmPlayer {
       const existing = this.nodes.get(note.key);
       if (existing) { if (existing.stop !== stop) { existing.src.stop(stop); existing.stop = stop; } continue; }
       const buffer = this.prepared.buffers.get(note.wave)!;
-      const offset = Math.max(0, elapsed - note.start);
+      const offset = note.offset + Math.max(0, elapsed - note.start);
       if (offset >= buffer.duration) continue;
       const src = this.ctx.createBufferSource(), gain = this.ctx.createGain();
       src.buffer = buffer; gain.gain.value = note.gain;
