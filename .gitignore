@@ -3,6 +3,8 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+# `npm pack` output: the release workflow builds and attaches the tarball
+*.tgz
 .scannerwork/
 
 # OS / editor
