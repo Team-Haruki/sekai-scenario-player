@@ -28,6 +28,8 @@ const MAX_BURSTS_PER_STEP = 64; // catch-up bound for a burst repeating faster t
 const SETTLE_MAX = 10; // s an effect restored by a jump is run on before it shows
 const SETTLE_STEP = 1 / 30;
 const UNITY_QUAD_MESH = 10210; // fileID of Unity's built-in Quad
+const UNITY_CUBE_MESH = 10202; // fileID of Unity's built-in Cube
+const RENDER_ALIGN_LOCAL = 2; // ParticleSystemRenderSpace.Local
 
 // ── data types (effect.json) ─────────────────────────────────────────────────
 type Curve = { k: [number, number, number, number][]; w?: [number, number] } | null;
@@ -78,6 +80,36 @@ interface FxData {
   meshes: Record<string, Json>;
   clips: Record<string, Json>;
   unit?: number;
+}
+
+interface MeshShape {
+  verts: number[][];
+  uvs?: number[][] | null;
+  tris: number[];
+}
+// Unity's Cube: 6 faces, each with the whole texture. The particle shaders are
+// Cull Off / ZWrite Off, so the front and back faces both draw.
+const CUBE_SHAPE: MeshShape = { verts: [], uvs: [], tris: [] };
+for (const [a, b, c] of [[0, 1, 2], [1, 2, 0], [2, 0, 1]])
+  for (const side of [-0.5, 0.5]) {
+    const at = CUBE_SHAPE.verts.length;
+    for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+      const vert = [0, 0, 0];
+      vert[a] = u - 0.5;
+      vert[b] = v - 0.5;
+      vert[c] = side;
+      CUBE_SHAPE.verts.push(vert);
+      CUBE_SHAPE.uvs!.push([u, v]);
+    }
+    CUBE_SHAPE.tris.push(at, at + 1, at + 2, at, at + 2, at + 3);
+  }
+// The mesh a Mesh-mode renderer draws; undefined keeps the quad path (Quad,
+// other built-ins, a mesh the converter could not decode).
+function meshShape(psr: Json, meshes: Record<string, Json> | undefined): MeshShape | undefined {
+  if (psr?.m_RenderMode !== 4) return undefined;
+  if (psr.mesh?.builtin === UNITY_CUBE_MESH) return CUBE_SHAPE;
+  const mesh = typeof psr.mesh === "string" ? meshes?.[psr.mesh] : undefined;
+  return mesh?.verts?.length && mesh.tris?.length ? mesh : undefined;
 }
 
 // ── curve / gradient evaluation ─────────────────────────────────────────────
@@ -236,6 +268,8 @@ interface Particle {
   life: number;
   size: number[];
   rot: number;
+  rx: number; // 3D start rotation of mesh particles (radians); rot is Z
+  ry: number;
   rotVel: number;
   color: number[];
   r: number[]; // per-particle randoms
@@ -257,6 +291,7 @@ class Emitter {
   private emitAcc = 0;
   private burstDone: number[] = [];
   mesh?: PIXI.Mesh;
+  shape?: MeshShape;
   blend: BlendKind = "alpha";
   customStream = false;
   world: Mat = IDENT; // emitter frame (ref px), updated per frame
@@ -314,9 +349,20 @@ class Emitter {
     let life = evalMM(im.startLifetime, tn, rand());
     const speed = evalMM(im.startSpeed, tn, rand());
     const sx = evalMM(im.startSize, tn, r[0]);
-    const size = im.size3D ? [sx, evalMM(im.startSizeY, tn, r[0]), 1] : [sx, sx, 1];
+    const sz = this.shape ? (im.size3D ? evalMM(im.startSizeZ, tn, r[0]) : sx) : 1;
+    const size = im.size3D ? [sx, evalMM(im.startSizeY, tn, r[0]), sz] : [sx, sx, sz];
     let rot = evalMM(im.startRotation, tn, rand());
-    if (im.randomizeRotationDirection && rand() < im.randomizeRotationDirection) rot = -rot;
+    let rx = 0;
+    let ry = 0;
+    if (this.shape && im.rotation3D) {
+      rx = evalMM(im.startRotationX, tn, rand());
+      ry = evalMM(im.startRotationY, tn, rand());
+    }
+    if (im.randomizeRotationDirection && rand() < im.randomizeRotationDirection) {
+      rot = -rot;
+      rx = -rx;
+      ry = -ry;
+    }
     let color = evalMMG(im.startColor, tn, rand());
     let v = dir.map((d) => d * speed);
     if (this.worldSpace) {
@@ -326,11 +372,11 @@ class Emitter {
     if (at) pos = at.slice();
     if (inherit) {
       if (inheritFlags & 1) color = color.map((c, i) => c * inherit.color[i]) as typeof color;
-      if (inheritFlags & 2) for (let i = 0; i < 2; i++) size[i] *= inherit.size[i];
+      if (inheritFlags & 2) for (let i = 0; i < 3; i++) size[i] *= inherit.size[i];
       if (inheritFlags & 4) rot += inherit.rot;
       if (inheritFlags & 8) life *= inherit.life;
     }
-    const p: Particle = { p: pos, v, age: 0, life: Math.max(life, 1e-3), size, rot, rotVel: 0, color, r };
+    const p: Particle = { p: pos, v, age: 0, life: Math.max(life, 1e-3), size, rot, rx, ry, rotVel: 0, color, r };
     const sub = this.ps.SubModule?.subEmitters as Json[] | undefined;
     if (sub)
       for (const s of sub) {
@@ -525,7 +571,13 @@ class Emitter {
       }
       for (let i = 0; i < 3; i++) p.p[i] += vel[i] * dt;
       const rm = ps.RotationModule;
-      if (rm?.enabled) p.rot += evalMM(rm.curve, t, p.r[4]) * dt;
+      if (rm?.enabled) {
+        p.rot += evalMM(rm.curve, t, p.r[4]) * dt;
+        if (this.shape && rm.separateAxes) {
+          p.rx += evalMM(rm.x, t, p.r[4]) * dt;
+          p.ry += evalMM(rm.y, t, p.r[4]) * dt;
+        }
+      }
       // birth sub-emitters follow the particle
       if (p.sub) for (const s of p.sub) this.runSub(s, p, dt);
       out.push(p);
@@ -611,8 +663,122 @@ class Emitter {
   }
 
   // ── geometry ──────────────────────────────────────────────────────────────
-  build(alpha: number) {
+  // current size (units) after the size modules
+  private sizeAt(p: Particle, t: number) {
     const ps = this.ps;
+    const sm = ps.SizeModule;
+    let [sx, sy, sz] = p.size;
+    if (sm?.enabled) {
+      const a = evalMM(sm.curve, t, p.r[5]);
+      sx *= a;
+      sy *= sm.separateAxes ? evalMM(sm.y, t, p.r[5]) : a;
+      sz *= sm.separateAxes ? evalMM(sm.z, t, p.r[5]) : a;
+    }
+    const sbs = ps.SizeBySpeedModule;
+    if (sbs?.enabled) {
+      const sp = Math.hypot(...p.v) / (this.worldSpace ? this.u : 1);
+      const range = sbs.range || { x: 0, y: 1 };
+      const tt = Math.min(1, Math.max(0, (sp - range.x) / ((range.y - range.x) || 1)));
+      const a = evalMM(sbs.curve, tt, p.r[5]);
+      sx *= a;
+      sy *= a;
+      sz *= a;
+    }
+    return [sx, sy, sz];
+  }
+  private colorAt(p: Particle, t: number) {
+    const cm = this.ps.ColorModule;
+    if (!cm?.enabled) return p.color.slice();
+    const g = evalMMG(cm.gradient, t, p.r[6]);
+    return p.color.map((v, j) => v * g[j]);
+  }
+  // texture sheet tile as [u0, v0, u1, v1], v from the top of the image
+  private frameAt(p: Particle, t: number) {
+    const um = this.ps.UVModule;
+    if (!um?.enabled || (this.uv.tx <= 1 && this.uv.ty <= 1)) return [0, 0, 1, 1];
+    const cyc = um.cycles || 1;
+    const tt = (t * cyc) % 1;
+    const count = um.animationType === 1 ? this.uv.tx : this.uv.tx * this.uv.ty;
+    // frameOverTime and startFrame are serialised as fractions of the sheet
+    const fr = evalMM(um.frameOverTime, tt, p.r[7]) + evalMM(um.startFrame, 0, p.r[7]);
+    let f = Math.floor(fr * count) % count;
+    if (f < 0) f += count;
+    let row = 0;
+    if (um.animationType === 1) row = um.rowMode === 1 ? Math.floor(p.r[0] * this.uv.ty) : um.rowIndex || 0;
+    const fx = um.animationType === 1 ? f : f % this.uv.tx;
+    const fy = um.animationType === 1 ? row : Math.floor(f / this.uv.tx);
+    return [fx / this.uv.tx, fy / this.uv.ty, (fx + 1) / this.uv.tx, (fy + 1) / this.uv.ty];
+  }
+  private keepAt(p: Particle, t: number) {
+    if (this.blend === "add") return 0;
+    if (this.blend !== "addAlpha") return 1;
+    const cd = this.ps.CustomDataModule;
+    const cx1 = this.customStream && cd?.enabled ? evalMM(cd.vector0_0, t, p.r[3]) : 0;
+    return cx1 > 0.5 ? 0 : 1;
+  }
+  private upload(pos: Float32Array, uv: Float32Array, col: Float32Array, keep: Float32Array, idx: Uint16Array | Uint32Array, alpha: number, st: number[]) {
+    const m = this.mesh!;
+    const geo = m.geometry;
+    geo.getBuffer("aVertexPosition").update(pos);
+    geo.getBuffer("aTextureCoord").update(uv);
+    geo.getBuffer("aColor").update(col);
+    geo.getBuffer("aKeep").update(keep);
+    geo.getIndex().update(idx);
+    m.shader.uniforms.uAlpha = alpha;
+    m.shader.uniforms.uST = st;
+    m.visible = this.particles.length > 0;
+  }
+
+  // Mesh particles: vertex · size · scale, rotated by the particle's 3D rotation
+  // (and the emitter's when aligned to Local), then dropped onto the screen by
+  // the orthographic camera. Z turns the same way as a billboard.
+  private buildShape(shape: MeshShape, alpha: number) {
+    const psr = this.node.psr;
+    const piv = psr.pivot || [0, 0, 0];
+    const align = psr.m_RenderAlignment === RENDER_ALIGN_LOCAL ? this.rotM : null;
+    const n = this.particles.length;
+    const nv = shape.verts.length;
+    const nt = shape.tris.length;
+    const pos = new Float32Array(n * nv * 2);
+    const uv = new Float32Array(n * nv * 2);
+    const col = new Float32Array(n * nv * 4);
+    const keep = new Float32Array(n * nv);
+    const idx = n * nv > 0xffff ? new Uint32Array(n * nt) : new Uint16Array(n * nt);
+    for (let i = 0; i < n; i++) {
+      const p = this.particles[i];
+      const t = p.age / p.life;
+      const ref = this.worldSpace ? p.p : this.toRef(p.p);
+      const size = this.sizeAt(p, t);
+      const sx = size[0] * this.u * this.scale[0];
+      const sy = size[1] * this.u * this.scale[1];
+      const sz = size[2] * this.u * this.scale[2];
+      const own = trs([0, 0, 0], eulerToQuat([p.rx / DEG, p.ry / DEG, -p.rot / DEG]), [1, 1, 1]);
+      const r = align ? mul(align, own) : own;
+      const [u0, v0, u1, v1] = this.frameAt(p, t);
+      const c = this.colorAt(p, t);
+      const base = i * nv;
+      for (let j = 0; j < nv; j++) {
+        const vert = shape.verts[j];
+        const x = (vert[0] - piv[0]) * sx;
+        const y = (vert[1] - piv[1]) * sy;
+        const z = (vert[2] - piv[2]) * sz;
+        pos[(base + j) * 2] = 640 + (ref[0] + r[0] * x + r[1] * y + r[2] * z) * K;
+        pos[(base + j) * 2 + 1] = 360 - (ref[1] + r[4] * x + r[5] * y + r[6] * z) * K;
+        // the sheet tile in Unity's v (from the bottom), for the flipped uST below
+        const mv = shape.uvs?.[j];
+        uv[(base + j) * 2] = u0 + (mv?.[0] ?? 0) * (u1 - u0);
+        uv[(base + j) * 2 + 1] = 1 - (v0 + (1 - (mv?.[1] ?? 0)) * (v1 - v0));
+        col.set(c, (base + j) * 4);
+      }
+      keep.fill(this.keepAt(p, t), base, base + nv);
+      for (let j = 0; j < nt; j++) idx[i * nt + j] = base + shape.tris[j];
+    }
+    // Unity's v runs up, the texture's runs down: v' = 1 - (v·S + O)
+    this.upload(pos, uv, col, keep, idx, alpha, [this.st[0], -this.st[1], this.st[2], 1 - this.st[3]]);
+  }
+
+  build(alpha: number) {
+    if (this.shape) return this.buildShape(this.shape, alpha);
     const psr = this.node.psr || {};
     const mode = psr.m_RenderMode ?? 0;
     const n = this.particles.length;
@@ -621,15 +787,11 @@ class Emitter {
     const col = new Float32Array(n * 16);
     const keep = new Float32Array(n * 4);
     const idx = new Uint16Array(n * 6);
-    const sm = ps.SizeModule;
-    const cm = ps.ColorModule;
-    const um = ps.UVModule;
-    const cd = ps.CustomDataModule;
     const piv = psr.pivot || [0, 0, 0];
     const minPx = (psr.m_MinParticleSize ?? 0) * 720;
     const maxPx = (psr.m_MaxParticleSize ?? 0.5) * 720 * 2; // screen-height fraction (generous)
     // Unity limits only billboards, and full-screen covers are Quad meshes.
-    // Other meshes are still drawn as a quad here, so they keep the limit.
+    // A mesh without geometry here is drawn as a quad and keeps the limit.
     const unlimited = mode === 4 && psr.mesh?.builtin === UNITY_QUAD_MESH;
     for (let i = 0; i < n; i++) {
       const p = this.particles[i];
@@ -638,51 +800,14 @@ class Emitter {
       const ref = this.worldSpace ? p.p : this.toRef(p.p);
       const cx = 640 + ref[0] * K;
       const cy = 360 - ref[1] * K;
-      let sx = p.size[0];
-      let sy = p.size[1];
-      if (sm?.enabled) {
-        const a = evalMM(sm.curve, t, p.r[5]);
-        sx *= a;
-        sy *= sm.separateAxes ? evalMM(sm.y, t, p.r[5]) : a;
-      }
-      const sbs = ps.SizeBySpeedModule;
-      if (sbs?.enabled) {
-        const sp = Math.hypot(...p.v) / (this.worldSpace ? this.u : 1);
-        const range = sbs.range || { x: 0, y: 1 };
-        const tt = Math.min(1, Math.max(0, (sp - range.x) / ((range.y - range.x) || 1)));
-        const a = evalMM(sbs.curve, tt, p.r[5]);
-        sx *= a;
-        sy *= a;
-      }
+      const [sx, sy] = this.sizeAt(p, t);
       let w = sx * this.u * Math.abs(this.scale[0]) * K;
       let h = sy * this.u * Math.abs(this.scale[1]) * K;
       const clampPx = (v: number) => (unlimited ? v : Math.min(Math.max(v, minPx), maxPx || v));
       w = clampPx(w);
       h = clampPx(h);
-      let c = p.color.slice();
-      if (cm?.enabled) {
-        const g = evalMMG(cm.gradient, t, p.r[6]);
-        c = c.map((v, j) => v * g[j]);
-      }
-      // texture sheet frame
-      let u0 = 0, v0 = 0, u1 = 1, v1 = 1;
-      if (um?.enabled && (this.uv.tx > 1 || this.uv.ty > 1)) {
-        const cyc = um.cycles || 1;
-        const tt = (t * cyc) % 1;
-        const count = um.animationType === 1 ? this.uv.tx : this.uv.tx * this.uv.ty;
-        // frameOverTime and startFrame are serialised as fractions of the sheet
-        const fr = evalMM(um.frameOverTime, tt, p.r[7]) + evalMM(um.startFrame, 0, p.r[7]);
-        let f = Math.floor(fr * count) % count;
-        if (f < 0) f += count;
-        let row = 0;
-        if (um.animationType === 1) row = um.rowMode === 1 ? Math.floor(p.r[0] * this.uv.ty) : um.rowIndex || 0;
-        const fx = um.animationType === 1 ? f : f % this.uv.tx;
-        const fy = um.animationType === 1 ? row : Math.floor(f / this.uv.tx);
-        u0 = fx / this.uv.tx;
-        u1 = (fx + 1) / this.uv.tx;
-        v0 = fy / this.uv.ty;
-        v1 = (fy + 1) / this.uv.ty;
-      }
+      const c = this.colorAt(p, t);
+      const [u0, v0, u1, v1] = this.frameAt(p, t);
       // quad corners (stage px)
       let ax: number, ay: number, bx: number, by: number;
       let rot = p.rot;
@@ -727,26 +852,11 @@ class Emitter {
       // corners TL, TR, BR, BL; sheet frame 0 is the top-left tile
       uv.set([u0, v0, u1, v0, u1, v1, u0, v1], i * 8);
       for (let j = 0; j < 4; j++) col.set(c, i * 16 + j * 4);
-      let kp = 1;
-      if (this.blend === "add") kp = 0;
-      else if (this.blend === "addAlpha") {
-        const cx1 = this.customStream && cd?.enabled ? evalMM(cd.vector0_0, t, p.r[3]) : 0;
-        kp = cx1 > 0.5 ? 0 : 1;
-      }
-      keep.fill(kp, i * 4, i * 4 + 4);
+      keep.fill(this.keepAt(p, t), i * 4, i * 4 + 4);
       const b = i * 4;
       idx.set([b, b + 1, b + 2, b, b + 2, b + 3], i * 6);
     }
-    const m = this.mesh!;
-    const geo = m.geometry;
-    geo.getBuffer("aVertexPosition").update(pos);
-    geo.getBuffer("aTextureCoord").update(uv);
-    geo.getBuffer("aColor").update(col);
-    geo.getBuffer("aKeep").update(keep);
-    geo.getIndex().update(idx);
-    m.shader.uniforms.uAlpha = alpha;
-    m.shader.uniforms.uST = this.st;
-    m.visible = n > 0;
+    this.upload(pos, uv, col, keep, idx, alpha, this.st);
   }
 }
 
@@ -870,7 +980,14 @@ export class FxInstance {
         em.customStream = !!n.psr?.m_UseCustomVertexStreams && String(n.psr?.m_VertexStreams || "").includes("1f");
         const tex = mat.tex?._MainTex;
         if (tex?.st) em.st = tex.st;
-        em.mesh = this.makeMesh(tex ? loadTex(`${base}/${tex.file}`, false) : whiteTex(), em.blend);
+        em.shape = meshShape(n.psr, data.meshes);
+        const texture = tex ? loadTex(`${base}/${tex.file}`, false) : whiteTex();
+        // lightning meshes run past u = 1 on a Repeat texture
+        if (tex && em.shape?.uvs?.some((uv) => uv.some((x) => x < 0 || x > 1))) {
+          texture.baseTexture.wrapMode = PIXI.WRAP_MODES.REPEAT;
+          texture.baseTexture.update();
+        }
+        em.mesh = this.makeMesh(texture, em.blend);
         this.addDrawable(em.mesh, n.psr, seq++);
       }
       if (n.image?.sprite || n.sprite?.sprite) {
