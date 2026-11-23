@@ -27,6 +27,7 @@ const DEG = Math.PI / 180;
 const MAX_BURSTS_PER_STEP = 64; // catch-up bound for a burst repeating faster than the frame rate
 const SETTLE_MAX = 10; // s an effect restored by a jump is run on before it shows
 const SETTLE_STEP = 1 / 30;
+const UNITY_QUAD_MESH = 10210; // fileID of Unity's built-in Quad
 
 // ── data types (effect.json) ─────────────────────────────────────────────────
 type Curve = { k: [number, number, number, number][]; w?: [number, number] } | null;
@@ -627,6 +628,9 @@ class Emitter {
     const piv = psr.pivot || [0, 0, 0];
     const minPx = (psr.m_MinParticleSize ?? 0) * 720;
     const maxPx = (psr.m_MaxParticleSize ?? 0.5) * 720 * 2; // screen-height fraction (generous)
+    // Unity limits only billboards, and full-screen covers are Quad meshes.
+    // Other meshes are still drawn as a quad here, so they keep the limit.
+    const unlimited = mode === 4 && psr.mesh?.builtin === UNITY_QUAD_MESH;
     for (let i = 0; i < n; i++) {
       const p = this.particles[i];
       const t = p.age / p.life;
@@ -652,7 +656,7 @@ class Emitter {
       }
       let w = sx * this.u * Math.abs(this.scale[0]) * K;
       let h = sy * this.u * Math.abs(this.scale[1]) * K;
-      const clampPx = (v: number) => Math.min(Math.max(v, minPx), maxPx || v);
+      const clampPx = (v: number) => (unlimited ? v : Math.min(Math.max(v, minPx), maxPx || v));
       w = clampPx(w);
       h = clampPx(h);
       let c = p.color.slice();
