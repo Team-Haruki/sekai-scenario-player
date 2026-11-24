@@ -94,6 +94,7 @@ Keep this model when changing handlers. Every wait and tween must go through `cl
   - `CrossFade` / `Stack`: BGM crossfades over Duration; SE plays after a Duration delay.
   - `SpecialSePlay`: plays an SE at the snippet's Volume.
   - `BgmVolume`: a level of its own that stays across cue changes, faded over Duration on the clock.
+  - The JP 7.1.0 `ProjectSekai.acf` rule `REACT_VOX_SENARIO_TO_BGM` ducks BGM to 65% while a voice plays and restores it over 500 ms with a SquareReverse curve. This gain multiplies with the scenario, listener, and cue fade levels for flat and block BGM.
   - `BgmAisacIndex` (6): block BGM change through `ScenarioAudio.SetBgmBlockIndex` (wait for an even block, pass its transition block, enter the target); see `bgm-sequence.ts`. Block rules follow the CRI Atom runtime of 7.1.0: a requested beat transition out of a `transitionMode: 1` block that leaves on beat *k* enters a beat-synchronised destination with more than *k* divisions at its own beat *k*, and notes already sounding there continue mid-wave; a block with `next` jumps there when it ends.
 - **CharacterLayoutMode (8)**: switches between the two- and three-character layouts, re-placing and re-scaling characters.
 - **Positions**: anchored X on the 1920-wide reference canvas: ±360 in the two-character layout, ±576 in the three-character one, ±1779 for the off-screen slots; scales 1.0 / 0.9. From `ScenarioCharacterLayoutMap.Initialize`.
