@@ -34,6 +34,9 @@ const CLIP_CACHE = 32; // clips kept (a few seconds of decoded mono each)
 const VOICE_WAIT = 10_000; // a voice not loaded by then is skipped
 const SE_LATE = 3_000; // an SE that loads later than this no longer fits its moment
 const GESTURES = ["touchend", "pointerup", "click", "keydown"] as const;
+// ProjectSekai.acf (JP 7.1.0), REACT_VOX_SENARIO_TO_BGM.
+const VOICE_DUCK_LEVEL = 0.65;
+const VOICE_DUCK_RELEASE_MS = 500;
 
 /**
  * The first candidate that answers, as a Blob; null when none does. A
@@ -183,7 +186,7 @@ export class AudioManager {
   private muted = false;
   // listener volume per kind (0-1), applied on top of the scenario's own levels
   private vol: Record<VolumeKind, number> = { bgm: 1, voice: 1, se: 1 };
-  // a BGM element's level as the scenario sets it (fades, BgmVolume); el.volume = level x vol.bgm
+  // a flat BGM's own gain during cue crossfades
   private bgmLevel = new WeakMap<HTMLAudioElement, number>();
   // the voice line's own volume, for the direct (no-graph) path
   private voiceBase = 1;
@@ -207,6 +210,8 @@ export class AudioManager {
   private bgmGain?: GainNode;
   // BgmVolume of the scenario: applies to every BGM, across cue changes
   private bgmCategory = 1;
+  private voiceDuck = 1;
+  private voiceDuckRelease?: ReturnType<typeof setTimeout>;
   private disposed = false;
 
   /**
@@ -427,7 +432,7 @@ export class AudioManager {
     this.applyBgm(el);
   }
   private applyBgm(el: HTMLAudioElement) {
-    el.volume = clamp01((this.bgmLevel.get(el) ?? 0) * this.vol.bgm * this.bgmCategory);
+    el.volume = clamp01((this.bgmLevel.get(el) ?? 0) * this.bgmOutputVolume());
   }
 
   // ── BGM ──────────────────────────────────────────────────────────────────
@@ -520,7 +525,10 @@ export class AudioManager {
   }
   private applyBgmCategory() {
     for (const t of this.bgmTracks) this.applyBgm(t.el);
-    if (this.bgmGain) this.bgmGain.gain.value = this.vol.bgm * this.bgmCategory;
+    if (this.bgmGain) this.bgmGain.gain.value = this.bgmOutputVolume();
+  }
+  private bgmOutputVolume() {
+    return this.vol.bgm * this.bgmCategory * this.voiceDuck;
   }
   /** The scenario's BgmVolume (0-1). */
   get bgmVolume() {
@@ -596,6 +604,29 @@ export class AudioManager {
   }
 
   // ── voice ────────────────────────────────────────────────────────────────
+  private duckForVoice() {
+    clearTimeout(this.voiceDuckRelease);
+    this.voiceDuckRelease = undefined;
+    this.voiceDuck = VOICE_DUCK_LEVEL;
+    this.applyBgmCategory();
+  }
+
+  private releaseVoiceDuck() {
+    if (this.voiceDuck === 1 || this.voiceDuckRelease !== undefined || this.disposed) return;
+    const start = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, 1 - elapsed / VOICE_DUCK_RELEASE_MS);
+      // The ACF specifies SquareReverse for the return to the usual mix.
+      this.voiceDuck = 1 - (1 - VOICE_DUCK_LEVEL) * remaining ** 2;
+      this.applyBgmCategory();
+      this.voiceDuckRelease = remaining > 0
+        ? setTimeout(tick, Math.min(16, VOICE_DUCK_RELEASE_MS - elapsed))
+        : undefined;
+    };
+    tick();
+  }
+
   // Resolves when the voice clip ends (or fails to load). Never rejects.
   playVoice(urls: string[], volume = 1): Promise<void> {
     this.stopVoice();
@@ -605,6 +636,7 @@ export class AudioManager {
       const finish = () => {
         if (done) return;
         done = true;
+        if (token === this.voiceToken) this.releaseVoiceDuck();
         resolve();
       };
       this.voiceDone = finish;
@@ -632,6 +664,7 @@ export class AudioManager {
           };
           this.voiceNode = src;
           src.start();
+          this.duckForVoice();
           return;
         }
         const blob = await withTimeout(c.blob, VOICE_WAIT, null);
@@ -645,7 +678,10 @@ export class AudioManager {
         t.el.volume = clamp01(volume * this.vol.voice);
         t.onEnded = finish;
         this.direct = true;
-        if (!(await t.play()) && live()) {
+        const played = await t.play();
+        if (!live()) return;
+        if (played) this.duckForVoice();
+        else {
           t.stop(); // refused (no gesture yet): a later tap must not replay this line
           finish();
         }
@@ -655,6 +691,7 @@ export class AudioManager {
 
   stopVoice() {
     this.voiceToken++;
+    this.releaseVoiceDuck();
     if (this.voiceNode) {
       const n = this.voiceNode;
       this.voiceNode = undefined;
@@ -677,6 +714,7 @@ export class AudioManager {
 
   destroy() {
     this.disposed = true;
+    clearTimeout(this.voiceDuckRelease);
     for (const e of GESTURES) removeEventListener(e, this.unlock, { capture: true });
     this.stopVoice();
     this.stopBgm();

@@ -78,6 +78,70 @@ test('the scenario volume survives cue changes and combines with listener and cu
     audio.setBgmVolume(NaN);assert.equal(audio.bgmVolume,1);
   }finally{audio.destroy();}
 });
+test('a playing voice ducks both sides of a BGM crossfade and releases over 500 ms', async () => {
+  const { audio, sources } = audioFixture();
+  audio.analyser = {};
+  audio.clip = () => ({ blob: Promise.resolve(new Blob()) });
+  const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, String(actual));
+  try {
+    audio.setVolume('bgm', 0.5);
+    audio.setBgmVolume(0.4);
+    audio.playBgm(['plain.mp3'], 0.7, 0);
+    const flat = audio.bgm.el;
+    const voice = audio.playVoice(['line.mp3']);
+    near(flat.volume, 0.14); // still decoding
+    await flush();
+    near(flat.volume, 0.14 * 0.65);
+    await audio.prepareBgm(['cue.mp3'], ['sequence.json']);
+    audio.playBgm(['cue.mp3'], 0.7, 1000);
+    near(audio.bgmGain.gain.value, 0.2 * 0.65);
+    audio.setBgmVolume(0.8);
+    near(flat.volume, 0.28 * 0.65);
+    near(audio.bgmGain.gain.value, 0.4 * 0.65);
+
+    sources[0].onended();
+    await voice;
+    near(audio.bgmGain.gain.value, 0.4 * 0.65);
+    await vi.advanceTimersByTimeAsync(250);
+    assert.ok(audio.bgmGain.gain.value > 0.36 && audio.bgmGain.gain.value < 0.4);
+    await vi.advanceTimersByTimeAsync(250);
+    near(audio.bgmGain.gain.value, 0.4);
+    assert.equal(audio.bgmVolume, 0.8);
+  } finally { audio.destroy(); }
+  assert.equal(vi.getTimerCount(), 0);
+});
+
+test('direct voice playback restarts ducking during release and ignores a refused voice', async () => {
+  const { audio } = audioFixture();
+  audio.running = async () => false;
+  audio.clip = () => ({ blob: Promise.resolve(new Blob()) });
+  try {
+    audio.playBgm(['plain.mp3'], 1, 0);
+    const bgm = audio.bgm.el;
+    const first = audio.playVoice(['line.mp3']);
+    await flush();
+    assert.equal(bgm.volume, 0.65);
+    audio.stopVoice();
+    await first;
+    await vi.advanceTimersByTimeAsync(250);
+    assert.ok(bgm.volume > 0.65 && bgm.volume < 1);
+
+    const second = audio.playVoice(['next.mp3']);
+    await flush();
+    await vi.advanceTimersByTimeAsync(500);
+    assert.equal(bgm.volume, 0.65);
+    audio.voiceTrack.onEnded();
+    await second;
+    await vi.advanceTimersByTimeAsync(500);
+    assert.equal(bgm.volume, 1);
+
+    audio.voiceTrack.el.play = () => Promise.reject(new Error('autoplay denied'));
+    await audio.playVoice(['refused.mp3']);
+    assert.equal(bgm.volume, 1);
+  } finally { audio.destroy(); }
+  assert.equal(vi.getTimerCount(), 0);
+});
+
 test('crossfading sequences and plain cues releases old graphs and timers',async()=>{
   const {audio}=audioFixture();
   try {
